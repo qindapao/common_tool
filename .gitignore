@@ -30,3 +30,11 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+bin/com_mes
+bin/com_other
+test/TestPlat/bin/*
+
+# wim temp file
+*.swp
+
