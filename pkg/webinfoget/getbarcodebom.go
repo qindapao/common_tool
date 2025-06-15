@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"time"
 
-	"web_tool/pkg/logutil"
-	"web_tool/pkg/toolutil"
+	"common_tool/pkg/logutil"
+	"common_tool/pkg/toolutil"
+	"common_tool/pkg/webbase"
 )
 
-// ParserBase 直接内联进来不要嵌套，保持扁平化
-// 直接继承 ParserBase 的通用函数
+// MesParserBase 直接内联进来不要嵌套，保持扁平化
+// 直接继承 MesParserBase 的通用函数
 type GetBarcodeBOMParser struct {
-	ParserBase
+	MesParserBase
 	InputSn string
 	Data    string
 }
@@ -25,7 +26,7 @@ func (p *GetBarcodeBOMParser) GetName() string {
 // 根据命令行的参数,初始化结构体中的字段
 // 使用指针持久化对象
 func (p *GetBarcodeBOMParser) InitSelf(argsMap map[string]string) error {
-	if err := p.ParserBase.InitSelf(argsMap); err != nil {
+	if err := p.MesParserBase.InitSelf(argsMap); err != nil {
 		return err
 	}
 
@@ -45,16 +46,18 @@ func (p *GetBarcodeBOMParser) InitSelf(argsMap map[string]string) error {
 	return nil
 }
 
-// <ResultData><Bom>02314MAX</Bom><Rev></Rev><Sn>2102314MAX250100002E</Sn>
+// <ResultData>
+//
+//	<Bom>02314MAX</Bom>
+//	<Rev></Rev>
+//	<Sn>2102314MAX250100002E</Sn>
+//
 // </ResultData>
-// <Message><ErrorCode>0</ErrorCode><ErrorMsg>Success</ErrorMsg>
-// </Message>
 // 定义结构体，映射 XML 结构
 type barcodeBomResultData struct {
-	XMLName xml.Name `xml:"ResultData"`
-	Bom     string   `xml:"Bom"`
-	Rev     string   `xml:"Rev"`
-	Sn      string   `xml:"Sn"`
+	Bom string `xml:"Bom"`
+	Rev string `xml:"Rev"`
+	Sn  string `xml:"Sn"`
 }
 
 // :TODO: 更细化的错误处理
@@ -102,18 +105,19 @@ func (p *GetBarcodeBOMParser) ProcessXML() error {
 	return nil
 }
 
-func (p *GetBarcodeBOMParser) SaveJSON(subp interface{}) error {
-	// 显式调用 `ParserBase` 的方法
+func (p *GetBarcodeBOMParser) SaveJSON(subp any) error {
+	// 显式调用 `MesParserBase` 的方法
 	logutil.Debug("show p %v", p)
-	return p.ParserBase.SaveJSON(p)
+	return p.MesParserBase.SaveJSON(p)
 }
 
-// 首先注册帮助信息(编译的时候插入的)
+// 首先注册帮助信息(运行的时候早于main执行，并不是编译期执行)
 func init() {
 	// 注册帮助信息(这里要详细说明入参和出参的格式)
 	helpStr := `获取条码 BOM 编码
-        ./com_mes -a GetBarcodeBOM -s 2102314MAX250100002E -o result.json`
-	RegisterHelp("GetBarcodeBOM", helpStr)
+        ./com_mes -a GetBarcodeBOM -s 2102314MAX250100002E -o result.json
+		返回的 Data 字段是一个字符串，表示当前条码对应的BOM编码`
+	webbase.RegisterHelp("GetBarcodeBOM", helpStr)
 	// 注册解析器
-	RegisterParser(&GetBarcodeBOMParser{})
+	webbase.RegisterParser(&GetBarcodeBOMParser{})
 }

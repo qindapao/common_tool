@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"web_tool/pkg/logutil"
-	"web_tool/pkg/toolutil"
+	"common_tool/pkg/logutil"
+	"common_tool/pkg/toolutil"
 )
 
 // :TODO: 可能还有别的，结构体和构造函数都需要扩展
@@ -37,7 +37,7 @@ type Config struct {
 func NewWebConfig() WebConfig {
 	return WebConfig{
 		MesWebKeys: []string{"MES_WEBSERVER1", "MES_WEBSERVER2"},
-		TsdWebkeys: []string{"TSDCLOUD_WEBSER1", "TSDCLOUD_WEBSER2"},
+		TsdWebkeys: []string{"TSD_BARCODE_WEBSER1", "TSD_BARCODE_WEBSER2"},
 	}
 }
 
@@ -48,16 +48,19 @@ var (
 
 // 寻找根目录
 func findRootDir() string {
-	// 获取执行路径
-	execPath, err := os.Executable()
+	// 获取执行路径()
+	// execPath, err := os.Executable()
+	// 这里应该获取当前工作路径
+	execPath, err := os.Getwd()
 	if err != nil {
-		logutil.Error("无法获取执行路径: %s", err)
+		logutil.Error("获取当前工作目录失败: %w", err)
 		return ""
 	}
 
 	// 统一转换路径格式（适用于 Windows 和 Unix）
 	execPath = filepath.FromSlash(execPath)
 	execDir := filepath.Dir(execPath)
+	execDir = filepath.Clean(execDir)
 
 	// :TODO: 待验证
 	if execDir == "/root" || execDir == "/tmp" || execDir == "/data/dft" {

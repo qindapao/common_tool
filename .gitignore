@@ -31,10 +31,7 @@ go.work.sum
 # .idea/
 # .vscode/
 
-bin/com_mes
-bin/com_other
-test/TestPlat/bin/*
-
 # wim temp file
 *.swp
-
+bin/*
+test/TestPlat/bin/*

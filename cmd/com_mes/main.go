@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"os"
 
-	"web_tool/pkg/initutil"
-	"web_tool/pkg/logutil"
-	"web_tool/pkg/toolutil"
-	"web_tool/pkg/webinfoget"
+	"common_tool/pkg/initutil"
+	"common_tool/pkg/logutil"
+	"common_tool/pkg/toolutil"
+	"common_tool/pkg/webbase"
+	_ "common_tool/pkg/webinfoget"
 )
 
 const TOOL_VERSION = "1.0.0+20250604"
@@ -48,7 +49,7 @@ func printHelpInfo() {
         下
 每个动作单独的参数和返回值说明:`, TOOL_VERSION)
 	fmt.Println(helpText)
-	for _, desc := range webinfoget.HelpRegistry {
+	for _, desc := range webbase.HelpRegistry {
 		fmt.Printf("    %s: %s\n", desc[0], desc[1])
 	}
 }
@@ -86,6 +87,12 @@ func parseArgs() (map[string]string, error) {
 }
 
 func main() {
+	defer func() {
+		if err := logutil.CloseLogger(); err != nil {
+			fmt.Println("close logger fail.", err)
+		}
+	}()
+
 	// 调用参数解析函数
 	argsMap, err := parseArgs()
 	if err != nil {
@@ -128,8 +135,9 @@ func main() {
 		os.Exit(0)
 	}
 
-	parser, exists := webinfoget.GetParser(parserName)
-	logutil.Debug("parserName: %v parser: %v exists: %v", parserName, parser, exists)
+	parser, exists := webbase.GetParser(parserName)
+	logutil.Debug(
+		"parserName: %v parser: %v exists: %v", parserName, parser, exists)
 	if !exists {
 		logutil.Error("未找到解析器: %s", parserName)
 		os.Exit(1)

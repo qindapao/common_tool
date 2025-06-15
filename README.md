@@ -1,4 +1,4 @@
-# web_tool
+# common_tool
 
 命令行公共工具，提供统一的输入输出入口
 

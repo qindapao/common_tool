@@ -1,4 +1,4 @@
-module web_tool
+module common_tool
 
 go 1.24
 
