@@ -96,7 +96,7 @@ func findRootDir() string {
 }
 
 // InitSystem 初始化系统（跨平台路径处理）
-func InitSystem(logFileName string, logLevel int) {
+func InitSystem(logFileName string, logLevel logutil.LogLevel) {
 	once.Do(func() {
 		// 初始化日志
 		logutil.InitLogger(logFileName, logLevel)

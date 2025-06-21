@@ -89,9 +89,10 @@ func parseArgs() (map[string]string, error) {
 }
 
 func main() {
+	// fmt.Println("main exec")
 	defer func() {
 		if err := logutil.CloseLogger(); err != nil {
-			fmt.Println("close logger fail.", err)
+			fmt.Printf("Logger close error: %v\n", err)
 		}
 	}()
 
@@ -115,8 +116,12 @@ func main() {
 
 	// 运行时初始化系统，指定日志文件名
 	loglevel := logutil.WARN
-	if toolutil.HasAnyKey(argsMap, "-d") {
-		loglevel = logutil.LOG_LEVELS[argsMap["-d"]]
+	if val, ok := argsMap["-d"]; ok {
+		if level, err := logutil.ParseLogLevel(val); err == nil {
+			loglevel = level
+		} else {
+			fmt.Fprintf(os.Stderr, "警告: %v，使用默认等级 WARN\n", err)
+		}
 	}
 
 	// 日志文件的名字支持传进来
@@ -162,8 +167,7 @@ func main() {
 
 	// 保存 JSON
 	err = parser.SaveJSON(parser)
-	
-if err != nil {
+	if err != nil {
 		logutil.Error("保存 JSON 失败:: %s", err)
 		os.Exit(1)
 	}

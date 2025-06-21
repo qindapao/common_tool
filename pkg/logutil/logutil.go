@@ -12,23 +12,49 @@ import (
 	"sync"
 )
 
+type LogLevel int
+
 // :TODO: 增加日志堆栈功能打印
 
 // 定义日志级别
 const (
-	DEBUG = iota // 0
-	INFO         // 1
-	WARN         // 2
-	ERROR        // 3
+	DEBUG LogLevel = iota // 0
+	INFO                  // 1
+	WARN                  // 2
+	ERROR                 // 3
 )
 
 // 定义日志级别映射字符串
-var LOG_LEVELS = map[string]int{
+var LOG_LEVELS = map[string]LogLevel{
 	"DEBUG": DEBUG,
 	"INFO":  INFO,
 	"WARN":  WARN,
 	"ERROR": ERROR,
 }
+
+func (l *LogLevel) String() string {
+	for k, v := range LOG_LEVELS {
+		if v == *l {
+			return k
+		}
+	}
+	return "UNKNOWN"
+}
+
+func (l *LogLevel) Set(s string) error {
+	s = strings.ToUpper(s)
+	if val, ok := LOG_LEVELS[s]; ok {
+		*l = val
+		return nil
+	}
+	return fmt.Errorf("无效的日志等级: %s（支持: DEBUG/INFO/WARN/ERROR）", s)
+}
+
+func (l *LogLevel) Type() string {
+	return "LogLevel"
+}
+
+// 上面三个方法实现了pflag.Value接口，以便Cobra把它当作合法的flag类型来用
 
 var (
 	logger       *log.Logger
@@ -37,8 +63,16 @@ var (
 	currentLevel = INFO // 默认日志级别
 )
 
+func ParseLogLevel(s string) (LogLevel, error) {
+	s = strings.ToUpper(s)
+	if lvl, ok := LOG_LEVELS[s]; ok {
+		return lvl, nil
+	}
+	return 0, fmt.Errorf("无效日志等级: %s", s)
+}
+
 // InitLogger 初始化日志，允许指定输出目标（stdout 或 文件）
-func InitLogger(output string, level int) {
+func InitLogger(output string, level LogLevel) {
 	once.Do(func() {
 		var err error
 		if output == "stdout" {
@@ -57,7 +91,7 @@ func InitLogger(output string, level int) {
 }
 
 // logMessage 记录日志，**仅输出符合当前级别的日志**
-func logMessage(level int, msg string, args ...any) {
+func logMessage(level LogLevel, msg string, args ...any) {
 	if logger == nil {
 		InitLogger("stdout", INFO) // 默认输出到控制台
 	}
@@ -104,7 +138,7 @@ func logMessage(level int, msg string, args ...any) {
 }
 
 // 设置日志级别
-func SetLogLevel(level int) {
+func SetLogLevel(level LogLevel) {
 	currentLevel = level
 }
 
@@ -151,8 +185,7 @@ func Debug(msg string, args ...any) {
 // :TODO: 是否需要显式调用?
 func CloseLogger() error {
 	if logFile != nil && logFile != os.Stdout {
-		err := logFile.Close()
-		if err != nil {
+		if err := logFile.Close(); err != nil {
 			return err
 		}
 	}
