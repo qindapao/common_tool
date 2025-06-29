@@ -3,11 +3,11 @@ package webinfoget
 import (
 	"encoding/xml"
 	"fmt"
-	"strings"
 	"time"
 
 	"common_tool/pkg/logutil"
 	"common_tool/pkg/toolutil"
+	"common_tool/pkg/toolutil/textutil"
 	"common_tool/pkg/webbase"
 )
 
@@ -65,9 +65,10 @@ func (p *GetBomItemDetailParser) ProcessXML() error {
 		return err
 	}
 
-	p.Data = strings.Split(strings.ReplaceAll(result.Items, "\r\n", "\n"), "\n")
-	// 过滤掉空的元素(空字符串或者全是空白字符)
-	p.Data = toolutil.Grep(p.Data, `\S+`, false, true)
+	// 过滤掉非空的行
+	p.Data = textutil.NewBuilderByLines(result.Items).
+		FilterNonEmpty().
+		Result()
 
 	return nil
 }
@@ -96,7 +97,7 @@ func (p *GetBomItemDetailParser) SaveJSON(subp any) error {
 	return p.MesParserBase.SaveJSON(p)
 }
 
-// 首先注册帮助信息(运行的时候早于main执行,并不是编译期执行)
+// 首先注册帮助信息
 func init() {
 	// 注册帮助信息
 	helpStr := `获取条码 BOM 编码对应的PDM上的BOM明细

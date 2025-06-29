@@ -3,6 +3,7 @@ package qqjson
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"common_tool/pkg/sh"
@@ -11,14 +12,14 @@ import (
 )
 
 type OutputFormatter interface {
-	Format(res gjson.Result, varName string)
+	Format(res gjson.Result, varName string, jsonFormat JSONFormat)
 	// 可选: 用于错误退出前执行的清理
 	Cleanup(varName string)
 }
 
 type BashFormatter struct{}
 
-func (f BashFormatter) Format(res gjson.Result, varName string) {
+func (f BashFormatter) Format(res gjson.Result, varName string, _ JSONFormat) {
 	outputBash(varName, res)
 }
 
@@ -32,8 +33,8 @@ func (f BashFormatter) Cleanup(varName string) {
 
 type TextFormatter struct{}
 
-func (f TextFormatter) Format(res gjson.Result, _ string) {
-	outputText(res)
+func (f TextFormatter) Format(res gjson.Result, _ string, jsonFormat JSONFormat) {
+	outputText(res, jsonFormat)
 }
 
 func (f TextFormatter) Cleanup(varName string) {
@@ -43,6 +44,13 @@ func (f TextFormatter) Cleanup(varName string) {
 var formatters = map[string]OutputFormatter{
 	"sh":  BashFormatter{},
 	"txt": TextFormatter{},
+}
+
+type JSONFormatter func(any) ([]byte, error)
+
+var JsonFormatters = map[JSONFormat]JSONFormatter{
+	JSONFormatMul: func(v any) ([]byte, error) { return json.MarshalIndent(v, "", "    ") },
+	JSONFormatOne: func(v any) ([]byte, error) { return json.Marshal(v) },
 }
 
 // 使用 declare 确保是局部变量
@@ -77,13 +85,7 @@ func outputBash(name string, res gjson.Result) {
 	fmt.Printf("unset -v %s ; declare %s=%s\n", name, name, sh.BashANSIQuote(res.String()))
 }
 
-func outputText(res gjson.Result) {
-	// if res.IsArray() {
-	// 	res.ForEach(func(_, v gjson.Result) bool {
-	// 		fmt.Println(v.String())
-	// 		return true
-	// 	})
-	// } else {
+func outputText(res gjson.Result, jsonFormat JSONFormat) {
 	str := res.Raw // 更安全的方式获取原始 JSON 字符串
 
 	var pretty any
@@ -93,13 +95,17 @@ func outputText(res gjson.Result) {
 		return
 	}
 
-	formatted, err := json.MarshalIndent(pretty, "", "    ")
+	f, ok := JsonFormatters[jsonFormat]
+	if !ok {
+		return
+	}
+	formatted, err := f(pretty)
 	if err != nil {
 		// 出错时也回退打印原始值
 		fmt.Println(res.String())
 		return
 	}
 
-	fmt.Println(string(formatted))
+	os.Stdout.Write(formatted)
 	// }
 }

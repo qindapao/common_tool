@@ -2,66 +2,28 @@ package toolutil
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"reflect"
 )
 
-// Grep 函数：从文本中筛选符合条件的行
-func Grep(
-	lines []string,
-	pattern string,
-	caseInsensitive bool,
-	useRegex bool) []string {
-	var result []string
-	var matcher func(string) bool
+const ProjectPrefix = "common_tool/"
 
-	if useRegex {
-		// 正则匹配
-		if caseInsensitive {
-			pattern = "(?i)" + pattern // (?i) 让正则忽略大小写
-		}
-		re, err := regexp.Compile(pattern)
-		if err != nil {
-			fmt.Println("正则表达式错误:", err)
-			return nil
-		}
-		matcher = re.MatchString
-	} else {
-		// 关键字匹配（开头匹配）
-		if caseInsensitive {
-			pattern = strings.ToLower(pattern)
-			matcher = func(s string) bool {
-				return strings.HasPrefix(strings.ToLower(s), pattern)
-			}
-		} else {
-			matcher = func(s string) bool {
-				return strings.HasPrefix(s, pattern)
-			}
-		}
+func TrimToProjectPath(file string) string {
+	// 统一分隔符，确保在不同操作系统下都表现一致
+	path := filepath.ToSlash(file)
+
+	// 查找前缀位置
+	if idx := strings.Index(path, ProjectPrefix); idx >= 0 {
+		return path[idx+len(ProjectPrefix):]
 	}
-
-	// 遍历文本列表进行匹配
-	for _, line := range lines {
-		if matcher(line) {
-			result = append(result, line)
-		}
-	}
-
-	return result
-}
-
-// map 函数：应用某个转换逻辑
-func MapStrings(lines []string, transform func(string) string) []string {
-	result := make([]string, len(lines))
-	for i, line := range lines {
-		result[i] = transform(line)
-	}
-	return result
+	return path
 }
 
 // Go 1.8 才支持，先屏蔽掉
@@ -108,32 +70,6 @@ func ReadFileToLines(filePath string) ([]string, error) {
 	}
 
 	return lines, nil
-}
-
-// :TODO: 模拟awk的字符串截取，但是不完全相同(无分隔符打印第一个字段的情况)
-type StringProcessor struct {
-	str string
-}
-
-// 创建新的 StringProcessor 实例
-func NewStringProcessor(s string) *StringProcessor {
-	return &StringProcessor{str: s}
-}
-
-// 以指定分隔符拆分字符串，并更新为指定索引的字段
-func (p *StringProcessor) Split(delim string, index int) *StringProcessor {
-	fields := strings.Split(p.str, delim)
-	if index >= 0 && index < len(fields) {
-		p.str = fields[index]
-	} else {
-		p.str = "" // 索引超出范围时返回空串
-	}
-	return p
-}
-
-// 获取最终结果
-func (p *StringProcessor) Res() string {
-	return p.str
 }
 
 // Int64 Min 函数
@@ -207,4 +143,53 @@ func StructToMap(obj any) map[string]any {
 	}
 
 	return result
+}
+
+// 把任意对象转换成JSON格式
+func ToJSON(obj any) string {
+	data, err := json.MarshalIndent(obj, "", "    ")
+	if err != nil {
+		return fmt.Sprintf(`{"error":"failed to marshal object: %s"}`, err)
+	}
+	return string(data)
+}
+
+// 如果寄存器为空，设置寄存器的默认值
+func DefaultStr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
+}
+
+// sortedKeys 将 map[string]struct{} 的 key 排序后返回
+func SortedKeys(m map[string]struct{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// ReadHex 从文件读取十六进制字符串，补全前缀 "0x"
+func ReadHex(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return "0x0000"
+	}
+	s := strings.TrimSpace(string(b))
+	if !strings.HasPrefix(s, "0x") {
+		s = "0x" + s
+	}
+	return s
+}
+
+// ReadStr 从文件读取原始字符串
+func ReadStr(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }

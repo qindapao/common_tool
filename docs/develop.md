@@ -47,8 +47,66 @@ go test ./... -v | grep FAIL
 go test ./... -failfast -v
 ```
 
-## 待办
+## 循环依赖检查
 
-- [ ] 命令行参数的大小内核是有限制的，如果传参太大，可以考虑把传参放到文件中。工具要支持
-从文件中读取入参。
+```bash
+# 安装goda命令
+go install github.com/loov/goda@latest
 
+# 执行生成依赖关系图
+goda graph ./... | dot -Tpng -o deps.png
+# 生成 dot 文件
+goda graph ./... > deps.dot
+
+```
+
+## 编译
+
+一、纯 Go 代码（CGO_ENABLED=0）
+
+打开 cmd 或 PowerShell，切到项目目录；
+
+设置环境变量，然后直接 go build：
+
+Windows CMD 下：
+
+bat
+set CGO_ENABLED=0
+set GOOS=linux
+set GOARCH=arm
+set GOARM=7       ← 如果要编译给 ARMv7（32 位）跑的。  
+go build -o myapp-linux-arm   ./cmd/yourapp
+PowerShell 下：
+
+powershell
+$env:CGO_ENABLED = "0"
+$env:GOOS        = "linux"
+$env:GOARCH      = "arm"
+$env:GOARM       = "7"
+go build -o myapp-linux-arm ./cmd/yourapp
+运行完就能在 Windows 下得到可在 Linux/ARMv7 上跑的 myapp-linux-arm 二进制。
+
+如果要编 aarch64（ARM64），把 GOARCH=arm64，去掉 GOARM 即可。
+
+二、依赖 CGO（调用 C 库） Go 自带的交叉编译不带交叉 C 编译器，这时得：
+
+安装一个 Linux-ARM 的交叉工具链（比如在 MSYS2 或从你信任的源拿到 arm-linux-gnueabi-gcc、aarch64-linux-gnu-gcc 等）；
+
+设置额外环境：
+
+powershell
+$env:CGO_ENABLED = "1"
+$env:GOOS        = "linux"
+$env:GOARCH      = "arm"
+$env:GOARM       = "7"
+$env:CC_for_target = "arm-linux-gnueabi-gcc"    # 或者 aarch64-linux-gnu-gcc
+go build -o myapp-linux-arm ./cmd/yourapp
+这样 Go 在编译时就会调用你指定的交叉 C 编译器，把 C 部分也一起编进最终 ELF。
+
+总结
+
+纯 Go 最简单：CGO_ENABLED=0 GOOS=linux GOARCH=arm[ GOARM=...] go build；
+
+需要 cgo 时，多装个交叉 gcc，并把 CC_for_target（或 CC) 指向它。
+
+照着上面配，就能在 Windows 一键生成 Linux ARM 的 Go 可执行。

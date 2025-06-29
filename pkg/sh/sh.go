@@ -105,3 +105,11 @@ func BashANSIQuote(s string) string {
 	b.WriteString("'")
 	return b.String()
 }
+
+func BuildCommandLineQuoted(args []string) string {
+	quoted := make([]string, len(args))
+	for i, arg := range args {
+		quoted[i] = BashANSIQuote(arg)
+	}
+	return strings.Join(quoted, " ")
+}

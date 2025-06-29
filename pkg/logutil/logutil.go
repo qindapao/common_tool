@@ -5,11 +5,12 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"sync"
+
+	"common_tool/pkg/toolutil"
 )
 
 type LogLevel int
@@ -98,10 +99,7 @@ func logMessage(level LogLevel, msg string, args ...any) {
 	if level >= currentLevel { // 值越小打印得越多
 		_, file, line, _ := runtime.Caller(2) // 获取真正调用的文件+行号
 		// :TODO: 这里看下效果，但是不一定好
-		relPath, err := filepath.Rel(".", file)
-		if err == nil {
-			relPath = file
-		}
+		relPath := toolutil.TrimToProjectPath(file)
 
 		var formattedArgs []any
 		for _, arg := range args {

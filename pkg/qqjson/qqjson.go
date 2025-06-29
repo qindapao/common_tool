@@ -12,6 +12,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// :TODO: 需要增加输出到一行 JSON 的功能
+
 // 数组和字典指定写入可以不在这个工具中做
 // 在bash中自己处理
 type CLIOptions struct {
@@ -29,6 +31,39 @@ type CLIOptions struct {
 	FileInput  string
 	Input      any
 	Mode       string
+	JSONFormat JSONFormat
+}
+
+type JSONFormat string
+
+const (
+	JSONFormatOne JSONFormat = "one"
+	JSONFormatMul JSONFormat = "mul"
+)
+
+// 为了让 VarP 接收自定义类型，实现 flag.Value 接口(String Set Type)即可：
+func (f *JSONFormat) String() string { return string(*f) }
+
+func (f *JSONFormat) Set(val string) error {
+	switch val {
+	case string(JSONFormatMul), string(JSONFormatOne):
+		*f = JSONFormat(val)
+		return nil
+	default:
+		return fmt.Errorf("无效的 jsonformat 值: %s", val)
+	}
+}
+
+func (f *JSONFormat) Type() string {
+	return "jsonformat" // 这个字符串用于帮助文档与类型提示
+}
+
+// 列出所有的合法值
+func (JSONFormat) Values() []string {
+	return []string{
+		string(JSONFormatMul),
+		string(JSONFormatOne),
+	}
 }
 
 // 嵌套创建的时候如果遇到数字键要强制设置为字典
@@ -293,6 +328,9 @@ gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].4 -j '{
 	// 如果要写入的内容特别大只能通过文件传递进来
 	// 并且文件中只能放JSON格式数据
 	cmd.Flags().StringVarP(&opts.FileInput, "fileinput", "f", "", "写入的 JSON 文件")
+	// 输出的JSON文件的格式 (一行/多行美化打印)
+	opts.JSONFormat = JSONFormatMul
+	cmd.Flags().VarP(&opts.JSONFormat, "jsonformat", "F", "输出的 JSON 的格式(mul|one)，代表多行或者一行")
 
 	cmd.MarkFlagRequired("mode")
 
@@ -356,7 +394,7 @@ func (opts *CLIOptions) readValueFromJSON() error {
 		}
 	}
 
-	formatter.Format(result, opts.VarName)
+	formatter.Format(result, opts.VarName, opts.JSONFormat)
 
 	return nil
 }
@@ -404,7 +442,11 @@ func (opts *CLIOptions) modifyJSON(
 		return err
 	}
 
-	formatted, err := json.MarshalIndent(pretty, "", "    ")
+	f, ok := JsonFormatters[opts.JSONFormat]
+	if !ok {
+		return fmt.Errorf("不支持的选项内容: %s", opts.JSONFormat)
+	}
+	formatted, err := f(pretty)
 	if err != nil {
 		return err
 	}

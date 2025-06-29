@@ -1,6 +1,7 @@
 package initutil
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,7 +10,7 @@ import (
 	"sync"
 
 	"common_tool/pkg/logutil"
-	"common_tool/pkg/toolutil"
+	"common_tool/pkg/toolutil/textutil"
 )
 
 // :TODO: 可能还有别的，结构体和构造函数都需要扩展
@@ -131,69 +132,55 @@ func InitSystem(logFileName string, logLevel logutil.LogLevel) {
 	})
 }
 
+func extractWebValues(content string, keys []string) []string {
+	var out []string
+	for _, key := range keys {
+		val := textutil.NewBuilderByLines(content).
+			Filter(func(s string) bool {
+				return strings.HasPrefix(s, key+"=")
+			}).
+			SplitSep(key + "=").Index(1).
+			SplitSep("=").Index(0).
+			First()
+		out = append(out, val)
+	}
+	return out
+}
+
+func extractIntConfig(content, key string, defaultVal int) int {
+	val := textutil.NewBuilder(content).
+		RegexGroup(fmt.Sprintf(`(?m)^%s=([^;\r\n]+)`, regexp.QuoteMeta(key)), 1).
+		First()
+
+	if v, err := strconv.Atoi(val); err == nil {
+		return v
+	}
+	return defaultVal
+}
+
 // parseWebConfig 解析 Web 配置文件
 func parseWebConfig(filePath string) {
-	lines, err := toolutil.ReadFileToLines(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		logutil.Error("无法打开 Web 配置文件 %s", filePath)
 		return
 	}
 
-	// :TODO: 如果后面要解析的多可以提取出来
-	for _, key := range globalConfig.WebConfig.MesWebKeys {
-		// Grep返回的内容追加到mesWeb,如果为空那么什么都不发生
-		globalConfig.WebConfig.MesWeb = append(
-			globalConfig.WebConfig.MesWeb, toolutil.MapStrings(
-				toolutil.Grep(lines, key, false, false), func(s string) string {
-					return toolutil.NewStringProcessor(s).Split(
-						key+"=", 1).Split("=", 0).Res()
-				})...)
-	}
-
-	for _, key := range globalConfig.WebConfig.TsdWebkeys {
-		// Grep返回的内容追加到TsdWeb,如果为空那么什么都不发生
-		globalConfig.WebConfig.TsdWeb = append(
-			globalConfig.WebConfig.TsdWeb, toolutil.MapStrings(
-				toolutil.Grep(lines, key, false, false), func(s string) string {
-					return toolutil.NewStringProcessor(s).Split(
-						key+"=", 1).Split("=", 0).Res()
-				})...)
-	}
+	globalConfig.WebConfig.MesWeb = extractWebValues(string(content), globalConfig.WebConfig.MesWebKeys)
+	globalConfig.WebConfig.TsdWeb = extractWebValues(string(content), globalConfig.WebConfig.TsdWebkeys)
 }
 
 func parseDelayConfig(filePath string) (int64, int64) {
-	loop := "480"
-	loopInterval := "60"
-	lines, err := toolutil.ReadFileToLines(filePath)
+	content, err := os.ReadFile(filePath)
 	if err != nil {
 		logutil.Error("无法打开 延时 配置文件 %s", filePath)
-		// :TODO: 这里的魔鬼数字要处理下
 		return 480, 480 * 60
 	}
-	var loopList, loopInterList []string
-	loopList = toolutil.Grep(lines, "loop=", false, false)
-	loopInterList = toolutil.Grep(lines, "loopinterval=", false, false)
 
-	if len(loopList) > 0 {
-		re := regexp.MustCompile(`loop=([^;]+)`)
-		matchLoop := re.FindStringSubmatch(loopList[0])
-		if len(matchLoop) > 1 {
-			loop = matchLoop[1]
-		}
-	}
+	loop := extractIntConfig(string(content), "loop", 480)
+	interval := extractIntConfig(string(content), "loopinterval", 60)
 
-	if len(loopInterList) > 0 {
-		re := regexp.MustCompile(`loopinterval=([^;]+)`)
-		matchLoop := re.FindStringSubmatch(loopInterList[0])
-		if len(matchLoop) > 1 {
-			loopInterval = matchLoop[1]
-		}
-	}
-
-	loopInt, _ := strconv.Atoi(loop)
-	loopIntervalInt, _ := strconv.Atoi(loopInterval)
-
-	return int64(loopIntervalInt), int64(loopIntervalInt * loopInt)
+	return int64(interval), int64(interval * loop)
 }
 
 // GetConfig 获取全局配置

@@ -186,3 +186,31 @@ func RunCliTest[T any](t *testing.T, cmd Services, expected *T, jsonFile string)
 		}
 	})
 }
+
+// assertEqual 是一个辅助断言函数：比较两个字符串数组是否完全一致。
+// 如果长度不符或内容不同，会打印出具体位置和差异。
+func AssertEqual(t *testing.T, name string, got, want []string) {
+	if len(got) != len(want) {
+		t.Errorf("[%s] length mismatch: got %d, want %d", name, len(got), len(want))
+		return
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%s] mismatch at index %d:\n  got  = %q\n  want = %q", name, i, got[i], want[i])
+		}
+	}
+}
+
+func FindGoModRoot(start string) (string, error) {
+	dir := start
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", os.ErrNotExist
+		}
+		dir = parent
+	}
+}

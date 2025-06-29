@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"os"
 
+	"common_tool/pkg/errorutil"
+	"common_tool/pkg/hw/pcie"
 	"common_tool/pkg/logutil"
 	"common_tool/pkg/qqjson"
+	"common_tool/pkg/sshclient"
 
 	"github.com/spf13/cobra"
 )
@@ -15,7 +18,7 @@ const TOOL_VERSION = "1.0.0+20250619"
 func main() {
 	var rootCmd = &cobra.Command{
 		Use:   "gobolt",
-		Short: fmt.Sprintf("Gobolt v%s 是一个多功能 CLI 工具，支持 json/ipmi/lspci/setpci 等子命令", TOOL_VERSION),
+		Short: fmt.Sprintf("Gobolt v%s 是一个多功能 CLI 工具，支持 json/ssh/pcie 等子命令", TOOL_VERSION),
 		Long: "       .-.                       _             _  _   \n" +
 			"      (o o)         __ _   ___  | |__    ___  | || |_ \n" +
 			"      | O \\        / _` | / _ \\ | '_ \\  / _ \\ | || __|\n" +
@@ -26,6 +29,9 @@ func main() {
 	}
 
 	rootCmd.AddCommand(qqjson.JsonCmd())
+	rootCmd.AddCommand(sshclient.SSHCmd())
+	rootCmd.AddCommand(pcie.PCIECmd())
+
 	var logFile string
 	logLevel := logutil.WARN
 
@@ -44,13 +50,12 @@ func main() {
 		return nil
 	}
 
+	exitCode := errorutil.CodeSuccess
 	if err := rootCmd.Execute(); err != nil {
-		logutil.Error("命令执行失败: %v", err)
-		logutil.CloseLogger()
-		os.Exit(1)
+		errJsonStr, code := errorutil.FormatErrorAndCode(err)
+		exitCode = code
+		logutil.Error(errJsonStr)
 	}
-
-	// 不要用defer，因为defer是在函数返回前执行的，而不是os.Exit()执行前执行
 	logutil.CloseLogger()
-	os.Exit(0)
+	os.Exit(exitCode)
 }
