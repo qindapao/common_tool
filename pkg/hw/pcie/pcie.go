@@ -12,13 +12,72 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"common_tool/pkg/toolutil/hex"
+	"common_tool/pkg/toolutil/str"
+
 	"github.com/spf13/cobra"
+)
+
+// 定义 各种 Feature 名字
+const (
+	FeatureNameBridge  = "bridge"
+	FeatureNameAER     = "aer"
+	FeatureNameHotplug = "hotplug"
+	FeatureNameSRIOV   = "sriov"
+	FeatureNameVGA     = "vga"
+	FeatureNameStorage = "storage"
+	// ...
+)
+
+// Base Class Codes (bits 23:16 of Class Code)
+const (
+	PciClassBridge  = 0x06
+	PciClassStorage = 0x01
+	PciClassDisplay = 0x03
+	// ...
+)
+
+// Subclass Codes for Bridge (bits 15:8 if base == 0x06)
+const (
+	PciSubClassPciToPciBridge = 0x04
+	PciSubClassCardBusBridge  = 0x07
+	// ...
+)
+
+// ProgIF Codes for specific subclass (bits 7:0, context-dependent)
+const (
+	PciProgIFPciToPciStandard = 0x00
+)
+
+// Subclass Codes for Bridge (bits 15:8 if base == 0x06)
+const (
+	PciCfgOffsetPrimaryBus     = 0x18
+	PciCfgOffsetSecondaryBus   = 0x19
+	PciCfgOffsetSubordinateBus = 0x1A
+)
+
+// PCI Header Common
+const (
+	PciCfgOffsetVendorID     = 0x00
+	PciCfgOffsetDeviceID     = 0x02
+	PciCfgOffsetHeaderType   = 0x0E
+	PciCfgOffsetClassCode    = 0x0B // bits 23:16
+	PciCfgOffsetSubClass     = 0x0A
+	PciCfgOffsetProgIF       = 0x09
+	PciCfgOffsetRevisionID   = 0x08
+	PciCfgOffsetInterruptPin = 0x3D
 )
 
 var (
 	// 把常量改成可变变量，预设默认 sysfs 路径
 	sysfsRootDefault = "/sys/bus/pci/devices"
 )
+
+type DeviceFeature interface {
+	Name() string            // 标识功能类型（用于查找）
+	FromConfig([]byte) error // 从配置空间解析
+	Describe() string        // 可选：用于人类可读描述、UI 等
+}
 
 // ErrorMaps 收集三类 AER 错误计数
 type ErrorMaps struct {
@@ -27,21 +86,76 @@ type ErrorMaps struct {
 	Fatal       map[string]int `json:"fatal"`
 }
 
+// 实现 DeviceFeature 接口
+type PciBridgeInfo struct {
+	Primary     byte
+	Secondary   byte
+	Subordinate byte
+}
+
+func (b *PciBridgeInfo) Name() string { return FeatureNameBridge }
+func (b *PciBridgeInfo) Describe() string {
+	return fmt.Sprintf("Bridge: primary=%02X secondary=%02X subordinate=%02X",
+		b.Primary, b.Secondary, b.Subordinate)
+}
+
+func (b *PciBridgeInfo) FromConfig(cfg []byte) error {
+	if len(cfg) < PciCfgOffsetSubordinateBus+1 {
+		return fmt.Errorf("config too short for bridge")
+	}
+	b.Primary = cfg[PciCfgOffsetPrimaryBus]         // 桥的上游总线号（仅桥有效）
+	b.Secondary = cfg[PciCfgOffsetSecondaryBus]     // 桥的下游总线起始号
+	b.Subordinate = cfg[PciCfgOffsetSubordinateBus] //桥的下游总线终止号
+	return nil
+}
+
 // / PCIDevice 描述一个 PCI 设备或桥
+// :TODO: 按照当前的架构，其实 Errors (AER) 功能只是一个 Feature
+// 不能写死(面向能力编程 一个对象具备哪些能力)
 type PCIDevice struct {
-	Address     string       // PCI 地址，例如 "0000:00:1f.6"
-	Domain      uint16       // PCI 域号
-	Bus         uint8        // 总线号
-	VendorID    string       // 厂商 ID（0x1234）
-	DeviceID    string       // 设备 ID（0xabcd）
-	Class       string       // 类别代码（0x0604）
-	IsBridge    bool         // 是否为桥
-	Primary     uint8        // 桥的上游总线号（仅桥有效）
-	Secondary   uint8        // 桥的下游总线起始号
-	Subordinate uint8        // 桥的下游总线终止号
-	Errors      ErrorMaps    // 三类 AER 错误计数
-	Parent      string       // 父设备地址
-	Children    []*PCIDevice // 子设备列表
+	Address  string          // PCI 地址，例如 "0000:00:1f.6"
+	Domain   uint16          // PCI 域号
+	Bus      uint8           // 总线号
+	VendorID string          // 厂商 ID（0x1234）
+	DeviceID string          // 设备 ID（0xabcd）
+	Class    string          // 类别代码（0x0604）
+	Errors   ErrorMaps       // 三类 AER 错误计数
+	Parent   string          // 父设备地址
+	Children []*PCIDevice    // 子设备列表
+	Features []DeviceFeature // PCIE设备特性
+}
+
+// 添加功能
+func (d *PCIDevice) AddFeature(f DeviceFeature, cfg []byte) error {
+	if err := f.FromConfig(cfg); err != nil {
+		return err
+	}
+	d.Features = append(d.Features, f)
+	return nil
+}
+
+// 查找功能
+func (d *PCIDevice) GetFeature(name string) DeviceFeature {
+	for _, f := range d.Features {
+		if f.Name() == name {
+			return f
+		}
+	}
+	return nil
+}
+
+// 判断一个设备是否具有桥的能力
+func (d *PCIDevice) IsBridge() bool {
+	return d.GetFeature(FeatureNameBridge) != nil
+}
+
+// 列出某个设备支持的所有能力列表
+func (d *PCIDevice) ListFeatureNames() []string {
+	var names []string
+	for _, f := range d.Features {
+		names = append(names, f.Name())
+	}
+	return names
 }
 
 // Node 内部用于构建树形结构
@@ -72,12 +186,13 @@ var mockers = map[string]func(root string) error{
 }
 
 // MockDev 描述单个 mock 设备属性
+// 架构调整了但是这里的Mock结构体不用改，我们只是用它来生成文件而已
 type MockDev struct {
-	Addr                            string
-	IsBridge                        bool
-	Primary, Secondary, Subordinate uint8
-	Vendor, Device, Class           string
-	WithAER                         bool
+	Addr                  string
+	IsBridge              bool
+	PciBridge             PciBridgeInfo
+	Vendor, Device, Class string
+	WithAER               bool
 }
 
 // MockSimple 生成一个固定的“简单链路”场景
@@ -85,19 +200,19 @@ func MockSimple(root string) error {
 	// … 把之前 MockFunc 的内容搬过来即可 …
 	return mockSetup(root, []MockDev{
 		// 4 级桥链
-		{"0000:00:00.0", true, 0, 1, 3, "0x1234", "0xabcd", "0x0604", false},
-		{"0000:01:00.0", true, 1, 2, 3, "0x1234", "0xbcde", "0x0604", true},
-		{"0000:02:00.0", true, 2, 3, 3, "0x1234", "0xcdef", "0x0604", false},
-		{"0000:03:00.0", false, 0, 0, 0, "0x1234", "0xdef0", "0x0300", true},
+		{"0000:00:00.0", true, PciBridgeInfo{0, 1, 3}, "0x1234", "0xabcd", "0x0604", false},
+		{"0000:01:00.0", true, PciBridgeInfo{1, 2, 3}, "0x1234", "0xbcde", "0x0604", true},
+		{"0000:02:00.0", true, PciBridgeInfo{2, 3, 3}, "0x1234", "0xcdef", "0x0604", false},
+		{"0000:03:00.0", false, PciBridgeInfo{0, 0, 0}, "0x1234", "0xdef0", "0x0300", true},
 		// 3 级桥链
-		{"0000:10:00.0", true, 0x10, 0x11, 0x12, "0x1111", "0x2222", "0x0604", true},
-		{"0000:11:00.0", true, 0x11, 0x12, 0x12, "0x1111", "0x3333", "0x0604", false},
-		{"0000:12:00.0", false, 0, 0, 0, "0x1111", "0x4444", "0x0300", true},
+		{"0000:10:00.0", true, PciBridgeInfo{0x10, 0x11, 0x12}, "0x1111", "0x2222", "0x0604", true},
+		{"0000:11:00.0", true, PciBridgeInfo{0x11, 0x12, 0x12}, "0x1111", "0x3333", "0x0604", false},
+		{"0000:12:00.0", false, PciBridgeInfo{0, 0, 0}, "0x1111", "0x4444", "0x0300", true},
 		// 2 级桥链
-		{"0000:20:00.0", true, 0x20, 0x21, 0x21, "0x5555", "0x6666", "0x0604", false},
-		{"0000:21:00.0", false, 0, 0, 0, "0x5555", "0x7777", "0x0300", true},
+		{"0000:20:00.0", true, PciBridgeInfo{0x20, 0x21, 0x21}, "0x5555", "0x6666", "0x0604", false},
+		{"0000:21:00.0", false, PciBridgeInfo{0, 0, 0}, "0x5555", "0x7777", "0x0300", true},
 		// 孤立节点
-		{"0000:30:00.0", false, 0, 0, 0, "0x9999", "0xaaaa", "0x0300", false},
+		{"0000:30:00.0", false, PciBridgeInfo{0, 0, 0}, "0x9999", "0xaaaa", "0x0300", false},
 	})
 }
 
@@ -105,41 +220,41 @@ func MockSimple(root string) error {
 func MockComplex(root string) error {
 	return mockSetup(root, []MockDev{
 		// 1 级单节点
-		{"0000:40:00.0", false, 0, 0, 0,
+		{"0000:40:00.0", false, PciBridgeInfo{0, 0, 0},
 			"0xfeed", "0x0001", "0x0300", false},
 		// 2 级链：50 → 51
-		{"0000:50:00.0", true, 0x50, 0x51, 0x51,
+		{"0000:50:00.0", true, PciBridgeInfo{0x50, 0x51, 0x51},
 			"0xbeef", "0x0101", "0x0604", true},
-		{"0000:51:00.0", false, 0, 0, 0,
+		{"0000:51:00.0", false, PciBridgeInfo{0, 0, 0},
 			"0xbeef", "0x0102", "0x0300", false},
 		// 主干 4 级链：70 → 71 → 72 → 73 → 74
-		{"0000:70:00.0", true, 0x70, 0x71, 0x7D,
+		{"0000:70:00.0", true, PciBridgeInfo{0x70, 0x71, 0x7D},
 			"0xdead", "0x0301", "0x0604", false},
-		{"0000:71:00.0", true, 0x71, 0x72, 0x7D,
+		{"0000:71:00.0", true, PciBridgeInfo{0x71, 0x72, 0x7D},
 			"0xdead", "0x0302", "0x0604", true},
-		{"0000:72:00.0", true, 0x72, 0x73, 0x73,
+		{"0000:72:00.0", true, PciBridgeInfo{0x72, 0x73, 0x73},
 			"0xdead", "0x0303", "0x0604", false},
-		{"0000:73:00.0", true, 0x73, 0x74, 0x74,
+		{"0000:73:00.0", true, PciBridgeInfo{0x73, 0x74, 0x74},
 			"", "", "0x0604", true}, // 空 Vendor/Device，强制 ERR
-		{"0000:74:00.0", false, 0, 0, 0,
+		{"0000:74:00.0", false, PciBridgeInfo{0, 0, 0},
 			"", "", "0x0300", true}, // 纯叶子，ERR
 		// 同级直接跳：75 单节点（跳过中间层级）
-		{"0000:75:00.0", false, 0, 0, 0,
+		{"0000:75:00.0", false, PciBridgeInfo{0, 0, 0},
 			"0xdead", "0x0350", "0x0300", false},
 		// 另一条子链：77 → 78 → 79
-		{"0000:77:00.0", true, 0x77, 0x78, 0x78,
+		{"0000:77:00.0", true, PciBridgeInfo{0x77, 0x78, 0x78},
 			"0xdead", "0x0303", "0x0604", false},
-		{"0000:78:00.0", true, 0x78, 0x79, 0x79,
+		{"0000:78:00.0", true, PciBridgeInfo{0x78, 0x79, 0x79},
 			"", "", "0x0604", true}, // 空 VID/DID，ERR
-		{"0000:79:00.0", false, 0, 0, 0,
+		{"0000:79:00.0", false, PciBridgeInfo{0, 0, 0},
 			"", "", "0x0300", true},
 		// 额外叶子，紧跟在 77 同级
-		{"0000:7c:00.0", false, 0, 0, 0,
+		{"0000:7c:00.0", false, PciBridgeInfo{0, 0, 0},
 			"0xdead", "0x0303", "0x0300", false},
-		{"0000:7d:00.0", false, 0, 0, 0,
+		{"0000:7d:00.0", false, PciBridgeInfo{0, 0, 0},
 			"0xdead", "0x0303", "0x0300", false},
 		// 混合孤立节点
-		{"0000:80:00.0", false, 0, 0, 0,
+		{"0000:80:00.0", false, PciBridgeInfo{0, 0, 0},
 			"0xcafe", "0x0401", "0x0300", true},
 	})
 }
@@ -149,27 +264,27 @@ func MockMultiDomain(root string) error {
 	return mockSetup(root, []MockDev{
 		// === Domain 0001: 4 级链 + 跳 bus 级 ===
 		// 根桥：0001:00 → 0001:01–04
-		{"0001:00:00.0", true, 0x00, 0x01, 0x04, "0xaaaa", "0x1111", "0x0604", true},
+		{"0001:00:00.0", true, PciBridgeInfo{0x00, 0x01, 0x04}, "0xaaaa", "0x1111", "0x0604", true},
 		// 第二级：0001:01 → 0001:02–04
-		{"0001:01:00.0", true, 0x01, 0x02, 0x04, "0xaaaa", "0x2222", "0x0604", false},
+		{"0001:01:00.0", true, PciBridgeInfo{0x01, 0x02, 0x04}, "0xaaaa", "0x2222", "0x0604", false},
 		// 第三级：0001:02 → 0001:03–04
-		{"0001:02:00.0", true, 0x02, 0x03, 0x04, "0xaaaa", "0x3333", "0x0604", true},
+		{"0001:02:00.0", true, PciBridgeInfo{0x02, 0x03, 0x04}, "0xaaaa", "0x3333", "0x0604", true},
 		// 叶子：0001:04 设备
-		{"0001:04:00.0", false, 0, 0, 0, "0xaaaa", "0x4444", "0x0300", true},
+		{"0001:04:00.0", false, PciBridgeInfo{0, 0, 0}, "0xaaaa", "0x4444", "0x0300", true},
 
 		// 同域跳级：0001:06 → 0001:10
-		{"0001:06:00.0", true, 0x06, 0x07, 0x10, "0xbbbb", "0x5555", "0x0604", true},
-		{"0001:10:00.0", false, 0, 0, 0, "0xbbbb", "0x6666", "0x0300", false},
+		{"0001:06:00.0", true, PciBridgeInfo{0x06, 0x07, 0x10}, "0xbbbb", "0x5555", "0x0604", true},
+		{"0001:10:00.0", false, PciBridgeInfo{0, 0, 0}, "0xbbbb", "0x6666", "0x0300", false},
 
 		// === Domain 0002: 2 级简单链 ===
-		{"0002:20:00.0", true, 0x20, 0x21, 0x21, "0xcccc", "0x7777", "0x0604", false},
-		{"0002:21:00.0", false, 0, 0, 0, "0xcccc", "0x8888", "0x0300", true},
+		{"0002:20:00.0", true, PciBridgeInfo{0x20, 0x21, 0x21}, "0xcccc", "0x7777", "0x0604", false},
+		{"0002:21:00.0", false, PciBridgeInfo{0, 0, 0}, "0xcccc", "0x8888", "0x0300", true},
 
 		// === Domain 0003: 单节点 & 无 AER ===
-		{"0003:30:00.0", false, 0, 0, 0, "0xdddd", "0x9999", "0x0300", false},
+		{"0003:30:00.0", false, PciBridgeInfo{0, 0, 0}, "0xdddd", "0x9999", "0x0300", false},
 
 		// === Domain 0004: 单节点 & 支持 AER ===
-		{"0004:40:00.0", false, 0, 0, 0, "0xeeee", "0xaaaa", "0x0300", true},
+		{"0004:40:00.0", false, PciBridgeInfo{0, 0, 0}, "0xeeee", "0xaaaa", "0x0300", true},
 	})
 }
 
@@ -208,9 +323,9 @@ func mockSetup(root string, devs []MockDev) error {
 		// 如果是桥：写 config 寄存器字段
 		if m.IsBridge {
 			buf := make([]byte, 0x1B)
-			buf[0x18] = m.Primary
-			buf[0x19] = m.Secondary
-			buf[0x1A] = m.Subordinate
+			buf[0x18] = m.PciBridge.Primary
+			buf[0x19] = m.PciBridge.Secondary
+			buf[0x1A] = m.PciBridge.Subordinate
 			os.WriteFile(filepath.Join(d, "config"), buf, 0644)
 		}
 		// 如果需要 AER：写三类错误文件
@@ -300,6 +415,7 @@ func PCIEErrorRead() *cobra.Command {
 						children = append(children, c.Address)
 					}
 
+					// :TODO: 这里可以打印设备支持的所有 Feature
 					out[addr] = map[string]interface{}{
 						"summary":  sum,
 						"parent":   parent,
@@ -361,12 +477,12 @@ func scanAll(root string) (map[string]*PCIDevice, error) {
 			Address: addr,
 			Domain:  uint16(dom),
 			Bus:     uint8(bus),
-			VendorID: toolutil.ReadHex(
+			VendorID: hex.ReadHexStrFf(
 				filepath.Join(root, addr, "vendor")),
-			DeviceID: toolutil.ReadHex(
+			DeviceID: hex.ReadHexStrFf(
 				filepath.Join(root, addr, "device")),
 			Class: strings.TrimSpace(
-				toolutil.ReadStr(filepath.Join(root, addr, "class"))),
+				str.ReadStrFf(filepath.Join(root, addr, "class"))),
 			Errors: ErrorMaps{
 				Correctable: readErrorMap(
 					filepath.Join(root, addr, "aer_dev_correctable")),
@@ -377,21 +493,23 @@ func scanAll(root string) (map[string]*PCIDevice, error) {
 			},
 		}
 
+		class, _ := hex.ParseHexToUint32(dev.Class) // dev.Class == "0x060400"
+		baseClass := byte(class >> 16)
+
 		// PCIE 桥设备(PCIE配置空间寄存器)
 		// PCI-to-PCI Bridge（Class code 0x06/Subclass 0x04）
-		if strings.HasPrefix(dev.Class, "0x0604") {
+		// PCIE 配置空间是大端语义，内核已经封装好，不受架构限制
+		if baseClass == PciClassBridge {
+			// 原封不动地映射了这块设备的 PCI 配置空间（Configuration Space）头部的前 256 字节（Type-1 桥接器头）
+			// Primary Bus Number （寄存器 0x18） 桥接器上游所在的总线号，也就是这块桥本身“插在哪条”父总线下面。
+			// Secondary Bus Number （寄存器 0x19） 桥接器下游第一个子总线的编号，所有直接连在这个桥背后的设备都在这个总线上。
+			// Subordinate Bus Number （寄存器 0x1A） 整棵这块桥管辖的所有
+			// 子总线（包括孙桥、曾孙桥……）的最大总线号。 也就是说，这个桥
+			// 会“转发”从 Secondary 到 Subordinate 范围内所有的 PCI 事务。
 			if cfg, err := os.ReadFile(
-				// 原封不动地映射了这块设备的 PCI 配置空间（Configuration Space）头部的前 256 字节（Type-1 桥接器头）
-				filepath.Join(root, addr, "config")); err == nil && len(cfg) > 0x1A {
-				// Primary Bus Number （寄存器 0x18） 桥接器上游所在的总线号，也就是这块桥本身“插在哪条”父总线下面。
-				dev.Primary = cfg[0x18]
-				// Secondary Bus Number （寄存器 0x19） 桥接器下游第一个子总线的编号，所有直接连在这个桥背后的设备都在这个总线上。
-				dev.Secondary = cfg[0x19]
-				// Subordinate Bus Number （寄存器 0x1A） 整棵这块桥管辖的所有
-				// 子总线（包括孙桥、曾孙桥……）的最大总线号。 也就是说，这个桥
-				// 会“转发”从 Secondary 到 Subordinate 范围内所有的 PCI 事务。
-				dev.Subordinate = cfg[0x1A]
-				dev.IsBridge = true
+				filepath.Join(root, addr, "config")); err == nil &&
+				len(cfg) > PciCfgOffsetSubordinateBus {
+				_ = dev.AddFeature(&PciBridgeInfo{}, cfg)
 			}
 		}
 		out[addr] = dev
@@ -453,19 +571,26 @@ func buildTree(flat map[string]*PCIDevice) map[uint16][]*Node {
 	// 查找每个节点的最佳父桥
 	for _, n := range nodes {
 		var best *Node
+		var bestBridge *PciBridgeInfo
+		var rangeBest byte
 		for _, cand := range nodes {
 			// 只考虑桥且同域且地址不同
-			if !cand.D.IsBridge ||
+			if !cand.D.IsBridge() ||
 				cand.D.Domain != n.D.Domain ||
 				cand.D.Address == n.D.Address {
 				continue
 			}
-			// 如果 n 的总线号在 cand 桥的 Secondary–Subordinate 范围内
-			rangeCand := cand.D.Subordinate - cand.D.Secondary
-			rangeBest := best.D.Subordinate - best.D.Secondary
 
-			if n.D.Bus >= cand.D.Secondary &&
-				n.D.Bus <= cand.D.Subordinate {
+			// 如果 n 的总线号在 cand 桥的 Secondary–Subordinate 范围内
+			candBridge := cand.D.GetFeature(FeatureNameBridge).(*PciBridgeInfo)
+			rangeCand := candBridge.Subordinate - candBridge.Secondary
+			if best != nil {
+				bestBridge = best.D.GetFeature(FeatureNameBridge).(*PciBridgeInfo)
+				rangeBest = bestBridge.Subordinate - bestBridge.Secondary
+			}
+
+			if n.D.Bus >= candBridge.Secondary &&
+				n.D.Bus <= candBridge.Subordinate {
 				// 选择范围最小的桥，作为最近的父
 				// 每个 PCI-to-PCI 桥都有两个寄存器：
 				// Secondary：它管辖的下游总线起始号
@@ -479,12 +604,17 @@ func buildTree(flat map[string]*PCIDevice) map[uint16][]*Node {
 				// 所以比较两个桥的 (Subordinate - Secondary)，取最小的那个。
 
 				// 如果更窄，更新；若一样窄，就比 Secondary（起始 Bus）更小的
-				if best == nil || rangeCand < rangeBest ||
-					(rangeCand == rangeBest && cand.D.Secondary < best.D.Secondary) {
+				if best == nil {
+					best = cand
+					continue
+				}
+
+				if rangeCand < rangeBest ||
+					(rangeCand == rangeBest && candBridge.Secondary < bestBridge.Secondary) {
 					best = cand
 				}
 
-				if rangeCand == rangeBest && cand.D.Secondary == best.D.Secondary {
+				if rangeCand == rangeBest && candBridge.Secondary == bestBridge.Secondary {
 					logutil.Error("PCIE 拓扑错误，需要人工检查")
 				}
 			}
@@ -600,7 +730,6 @@ func printTable(
 	headers := []string{
 		"Device", "Parent", "firstbornChild", "Summary",
 		"Domain", "Bus", "Vendor", "DeviceID", "Class",
-		"Primary", "Secondary", "Subordinate",
 	}
 	for _, t := range cCols {
 		headers = append(headers, "C-"+t)
@@ -623,7 +752,7 @@ func printTable(
 	// 4. 输出每一行的数据
 	for _, addr := range addrs {
 		d := devs[addr]
-		parent := toolutil.DefaultStr(d.Parent, "null")
+		parent := str.DefaultStr(d.Parent, "null")
 		child := "null"
 
 		if len(d.Children) > 0 {
@@ -648,9 +777,6 @@ func printTable(
 			d.VendorID,
 			d.DeviceID,
 			d.Class,
-			fmt.Sprintf("0x%02x", d.Primary),
-			fmt.Sprintf("0x%02x", d.Secondary),
-			fmt.Sprintf("0x%02x", d.Subordinate),
 		}
 		// 三类错误计数列
 		for _, t := range cCols {

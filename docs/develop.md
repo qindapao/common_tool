@@ -45,6 +45,30 @@ go test ./... -v
 go test ./... -v | grep FAIL
 # 在第一个失败的时候就停止
 go test ./... -failfast -v
+# 基准测试
+go test -bench=. -benchmem
+# 对上面的基准测试的解释
+# go test：运行当前包下的所有测试文件（即 *_test.go 文件）
+# -bench=.：匹配所有以 BenchmarkXxx 命名的基准测试函数
+# . 是正则中的“匹配任意”，所以表示“跑所有 benchmark”
+# -benchmem 告诉 Go 工具“顺便测一下内存分配情况
+# 结果的解释:
+#     ns/op	每次操作耗时（纳秒）
+#     B/op	每次操作分配的内存（字节）
+#     allocs/op	每次操作发生多少次内存分配（通常越少越好）
+```
+
+### 常用的基准测试指令
+
+
+```bash
+go test -bench=.	                    跑所有基准测试
+go test -bench=MyFunc	                只 benchmark BenchmarkMyFunc
+go test -bench=My.*	                    跑所有 BenchmarkMy... 开头的测试
+go test -bench=. -benchtime=5s	        每个测试持续 5 秒（默认是 1s）
+go test -bench=. -count=5	            跑 5 次并取平均值
+go test -bench=. -benchmem -run=^$	    跳过所有单元测试（只跑 benchmark）
+go test -bench=. -cpuprofile=cpu.out    导出 CPU profile 可视化分析
 ```
 
 ## 循环依赖检查

@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"reflect"
 )
 
 const ProjectPrefix = "common_tool/"
@@ -48,7 +46,7 @@ func ReadFileToLines(filePath string) ([]string, error) {
 	var closeErr error
 	defer func() {
 		if cerr := file.Close(); cerr != nil {
-			closeErr = fmt.Errorf("关闭文件 %s 失败: %w\n", filePath, cerr)
+			closeErr = fmt.Errorf("关闭文件 %s 失败: %w", filePath, cerr)
 		}
 	}()
 
@@ -111,55 +109,22 @@ func HasAnyKey(m map[string]string, keys ...string) bool {
 	return false
 }
 
-// StructToMap 递归转换结构体到 map
-func StructToMap(obj any) map[string]any {
-	result := make(map[string]any)
-	val := reflect.ValueOf(obj)
-
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-
-	typ := val.Type()
-	for i := 0; i < val.NumField(); i++ {
-		field := typ.Field(i)
-		fieldValue := val.Field(i)
-
-		// 处理嵌套结构体
-		if fieldValue.Kind() == reflect.Struct {
-			if field.Anonymous {
-				// **扁平化匿名嵌套结构体（即 Go 结构体继承，如 ParserBase）**
-				subMap := StructToMap(fieldValue.Interface())
-				for k, v := range subMap {
-					result[k] = v // 合并，而不是嵌套
-				}
-			} else {
-				// **真正的嵌套结构体，保持层级**
-				result[field.Name] = StructToMap(fieldValue.Interface())
-			}
-		} else {
-			result[field.Name] = fieldValue.Interface()
-		}
-	}
-
-	return result
-}
-
 // 把任意对象转换成JSON格式
-func ToJSON(obj any) string {
+func ToJSONIndent(obj any) string {
 	data, err := json.MarshalIndent(obj, "", "    ")
 	if err != nil {
-		return fmt.Sprintf(`{"error":"failed to marshal object: %s"}`, err)
+		return fmt.Sprintf(`{"error":"failed to marshalindent object: %s"}`, err)
 	}
 	return string(data)
 }
 
-// 如果寄存器为空，设置寄存器的默认值
-func DefaultStr(s, def string) string {
-	if s == "" {
-		return def
+// 把任意对象转换成JSON格式(紧凑)
+func ToJSON(obj any) string {
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return fmt.Sprintf(`{"error":"failed to marshal object: %s"}`, err)
 	}
-	return s
+	return string(data)
 }
 
 // sortedKeys 将 map[string]struct{} 的 key 排序后返回
@@ -170,26 +135,4 @@ func SortedKeys(m map[string]struct{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
-}
-
-// ReadHex 从文件读取十六进制字符串，补全前缀 "0x"
-func ReadHex(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return "0x0000"
-	}
-	s := strings.TrimSpace(string(b))
-	if !strings.HasPrefix(s, "0x") {
-		s = "0x" + s
-	}
-	return s
-}
-
-// ReadStr 从文件读取原始字符串
-func ReadStr(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return string(b)
 }

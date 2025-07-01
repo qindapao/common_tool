@@ -12,13 +12,14 @@ import (
 
 	"common_tool/pkg/logutil"
 	"common_tool/pkg/toolutil"
+	"common_tool/pkg/toolutil/structutil"
 )
 
 // 维护所有子模块的帮助信息
 var HelpRegistry [][]string
 
-// 编译期仅仅保留声明，数据是在运行的时候分配的，并不是编译的时候分配
-// 而且运行期分配的是堆内存，是一个持久化的指针
+// 运行时分配在堆内存中，保存全局指针
+// 编译的时候只是保留声明
 var HttpClient = &http.Client{Timeout: 120 * time.Second}
 
 // 供包中的子模块注册帮助信息
@@ -170,18 +171,14 @@ func (p *ParserBase) SaveJSON(subp any) error {
 
 	logutil.Debug("show subp: %v", subp)
 
-	jsonData := toolutil.StructToMap(subp)
+	jsonData := structutil.StructToMap(subp)
 
 	// 手动控制写入JSON的情况
 	file, err := os.Create(p.OutputFile)
 	if err != nil {
 		return fmt.Errorf("创建文件失败: %w", err)
 	}
-	defer func() {
-		if err := file.Close(); err != nil {
-			fmt.Printf("file: %s close err: %v", p.OutputFile, err)
-		}
-	}()
+	defer file.Close()
 	encoder := json.NewEncoder(file)
 	// 保持良好的缩进
 	encoder.SetIndent("", "    ")
