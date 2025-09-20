@@ -35,3 +35,10 @@ go.work.sum
 *.swp
 bin/*
 test/TestPlat/bin/*
+.tags
+GPATH
+GRTAGS
+GTAGS
+**/*/icon.ico
+**/*/icon.syso
+

@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="120" height="86" viewBox="0 0 120 86"
+     xml:space="preserve">
+
+  <!-- 外框 -->
+  <rect x="1" y="1" width="118" height="84" rx="8"
+        fill="none" stroke="#000000" stroke-width="2"/>
+
+  <!-- 左侧胶片竖条 -->
+  <g fill="#000000">
+    <rect x="7" y="10" width="8" height="12" rx="2"/>
+    <rect x="7" y="27" width="8" height="12" rx="2"/>
+    <rect x="7" y="44" width="8" height="12" rx="2"/>
+    <rect x="7" y="61" width="8" height="12" rx="2"/>
+  </g>
+
+  <!-- 右侧胶片竖条 -->
+  <g fill="#000000">
+    <rect x="105" y="10" width="8" height="12" rx="2"/>
+    <rect x="105" y="27" width="8" height="12" rx="2"/>
+    <rect x="105" y="44" width="8" height="12" rx="2"/>
+    <rect x="105" y="61" width="8" height="12" rx="2"/>
+  </g>
+
+  <!-- 猫咪（耳朵外扩 + 箭头内收 + 整体上移） -->
+  <!-- 内部坐标中轴 c=48；translate(12,-6) 使中轴落在全图 x=60，并整体上移 6px -->
+  <g transform="translate(12,-6)"
+     stroke="#000000" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round"
+     fill="none">
+
+    <!-- 第一行: /\_/\ ，基线 y≈30 -->
+    <!-- 中央下划线 -->
+    <path d="M36,28 L60,28"/>
+    <!-- 左半耳朵（外扩 4px） -->
+    <path d="M20,28 L28,16 L36,28"/>
+    <!-- 右半耳朵（镜像左侧，自动外扩） -->
+    <g transform="translate(96,0) scale(-1,1)">
+      <path d="M20,28 L28,16 L36,28"/>
+    </g>
+
+    <!-- 第二行: ( o.o ) ，基线 y=50 -->
+    <!-- 鼻子（中点） -->
+    <circle cx="48" cy="56" r="2" fill="#000000" stroke="none"/>
+    <!-- 左括号与左眼 -->
+    <path d="M12,38 C8,44 8,56 12,62"/>
+    <circle cx="36" cy="50" r="6"/>
+    <!-- 右括号与右眼（镜像） -->
+    <g transform="translate(96,0) scale(-1,1)">
+      <path d="M12,38 C8,44 8,56 12,62"/>
+      <circle cx="36" cy="50" r="6"/>
+    </g>
+
+    <!-- 第三行: > - < ，基线 y=78 -->
+    <!-- 中央短横 -->
+    <path d="M36,72 L60,72"/>
+    <!-- 左半箭头（向中轴内收 4px） -->
+    <path d="M16,78 L24,72 L16,66"/>
+    <!-- 右半箭头（镜像左侧，自动内收） -->
+    <g transform="translate(96,0) scale(-1,1)">
+      <path d="M16,78 L24,72 L16,66"/>
+    </g>
+  </g>
+</svg>
+

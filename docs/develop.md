@@ -15,7 +15,7 @@ go mod tidy
 
 ```bash
 # windows的环境下
-go env -w GOMODCACHE=C:\\Users\\q00208337\\go\\pkg\\mod
+go env -w GOMODCACHE=C:\\Users\\xx\\go\\pkg\\mod
 go mod tidy
 ```
 

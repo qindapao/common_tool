@@ -26,7 +26,7 @@ type TsdParserBase struct {
 // Body: v
 //     Response: v
 //         XMLName: v
-//             Space: http://Auto.huawei.com.cn/
+//             Space: http://Auto.xx.com.cn/
 //             Local: Get_Info_FrmbarcodeResponse
 //         SExport: <sExport><?xml version="1.0" encoding="utf-8"?><GetBarcodeBOM><Export><ResultData></ResultData><Message><ErrorCode>1</ErrorCode><ErrorMsg>Not found any matched information</ErrorMsg></Message></Export></GetBarcodeBOM></sExport>
 
@@ -153,7 +153,7 @@ func (w *TsdInfoGet) GetInfo(acTion string, xmlInput string) error {
 }
 
 // 转义层级不够
-// <Get_Info_FrmbarcodeResponse xmlns="http://Auto.huawei.com.cn/"><sExport>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;GetSoftInfoExt&gt;&lt;Export&gt;&lt;ResultData&gt;
+// <Get_Info_FrmbarcodeResponse xmlns="http://Auto.xx.com.cn/"><sExport>&lt;?xml version="1.0" encoding="UTF-8"?&gt;&lt;GetSoftInfoExt&gt;&lt;Export&gt;&lt;ResultData&gt;
 // SoftCode Location RelationDomain ProgrammingStation Ict FT1 FT2 ST PreInstall SparePart TSS RTS Aging
 // 05022XEX NA PXM NA NA NA Load_MP1_Group1 NA NA NA NA NA NA
 // 05023AHX ProductStrategyConfig;BiosSelfTest; Software NA NA NA NA NA NA NA NA NA NA
@@ -161,9 +161,8 @@ func (w *TsdInfoGet) GetInfo(acTion string, xmlInput string) error {
 // &lt;/ResultData&gt;&lt;Message&gt;&lt;ErrorCode&gt;0&lt;/ErrorCode&gt;&lt;ErrorMsg&gt;success&lt;/ErrorMsg&gt;&lt;/Message&gt;&lt;/Export&gt;&lt;/GetSoftInfoExt&gt;</sExport></Get_Info_FrmbarcodeResponse>
 // 按照XML的层级，&amp; 应该写成 &amp;amp;
 
-// [q00546874@bin]$ ./com_tsd
-// <?xml version="1.0" encoding="UTF-8"?><GetSoftInfoExt><Import><HardwareBomCode>03033RWK</HardwareBomCode><PlatformType></PlatformType><DocumentVersion>1.004</DocumentVersion></Import></GetSoftInfoExt>
-// SOAP 响应 Body: <Get_Info_FrmbarcodeResponse xmlns="http://Auto.huawei.com.cn/"><sExport><?xml version="1.0" encoding="UTF-8"?><GetSoftInfoExt><Export><ResultData>
+// [xx@bin]$ ./com_tsd // <?xml version="1.0" encoding="UTF-8"?><GetSoftInfoExt><Import><HardwareBomCode>03033RWK</HardwareBomCode><PlatformType></PlatformType><DocumentVersion>1.004</DocumentVersion></Import></GetSoftInfoExt>
+// SOAP 响应 Body: <Get_Info_FrmbarcodeResponse xmlns="http://Auto.xx.com.cn/"><sExport><?xml version="1.0" encoding="UTF-8"?><GetSoftInfoExt><Export><ResultData>
 // SoftCode Location RelationDomain ProgrammingStation Ict FT1 FT2 ST PreInstall SparePart TSS RTS Aging
 // 05022XEX NA PXM NA NA NA Load_MP1_Group1 NA NA NA NA NA NA
 // 05023AHX ProductStrategyConfig;BiosSelfTest; Software NA NA NA NA NA NA NA NA NA NA
@@ -173,7 +172,7 @@ func (w *TsdInfoGet) GetInfo(acTion string, xmlInput string) error {
 // SOAP 响应 Payload: <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
 //
 //	<soap:Body>
-//	    <Get_Info_Frmbarcode xmlns="http://Auto.huawei.com.cn/">
+//	    <Get_Info_Frmbarcode xmlns="http://Auto.xx.com.cn/">
 //	        <sExport></sExport>
 //	        <sTaskType>GetSoftInfoExt</sTaskType>
 //	        <sImport><?xml version="1.0" encoding="UTF-8"?><GetSoftInfoExt><Import><HardwareBomCode>03033RWK</HardwareBomCode><PlatformType></PlatformType><DocumentVersion>1.004</DocumentVersion></Import></GetSoftInfoExt></sImport>
@@ -181,7 +180,7 @@ func (w *TsdInfoGet) GetInfo(acTion string, xmlInput string) error {
 //	</soap:Body>
 //
 // </soap:Envelope>
-// [q00546874@bin]$
+// [xx@bin]$
 
 // bomCode := "03033RWK"
 

@@ -27,7 +27,7 @@ type MesParserBase struct {
 // Body: v
 //     Response: v
 //         XMLName: v
-//             Space: http://Auto.huawei.com.cn/
+//             Space: http://Auto.xx.com.cn/
 //             Local: Get_Info_FrmbarcodeResponse
 //         SExport: <sExport><?xml version="1.0" encoding="utf-8"?><GetBarcodeBOM><Export><ResultData></ResultData><Message><ErrorCode>1</ErrorCode><ErrorMsg>Not found any matched information</ErrorMsg></Message></Export></GetBarcodeBOM></sExport>
 
@@ -70,7 +70,7 @@ func (w *WebInfoGet) GetInfo(acTion string, xmlInput string) error {
 	payload := fmt.Sprintf(`<?xml version="1.0" encoding="utf-8"?>
             <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/">
                 <soapenv:Body>
-                    <Get_Info_Frmbarcode xmlns="http://Auto.huawei.com.cn/">
+                    <Get_Info_Frmbarcode xmlns="http://Auto.xx.com.cn/">
                         <sTaskType>%s</sTaskType>
                         <sImport><![CDATA[%s]]></sImport>
                     </Get_Info_Frmbarcode>

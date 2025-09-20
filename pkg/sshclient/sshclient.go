@@ -147,7 +147,7 @@ func (opts *CLIOptionsCmd) RunRemoteCommand() error {
 	return nil
 }
 
-// ./gobolt ssh scp_get -H 10.43.111.20 -U root -P huawei -p 50956 -L ./ -R '//home/q00546874/xx.txt'
+// ./gobolt ssh scp_get -H 10.43.111.20 -U root -P xx -p 50956 -L ./ -R '//home/xx/xx.txt'
 // gitbash 传路径要用 // 不然会被自动转换
 func (opts *CLIOptionsTransfer) SendDirOrFileToRemote() error {
 	switch opts.Direction {
