@@ -198,18 +198,21 @@ func (p *FramePlayer) addRecentDir(path string) {
 func (p *FramePlayer) playFramesReverse() {
 	p.reversePlaying = true
 	p.updateReversePlayIcon()
-	ticker := time.NewTicker(p.frameRate)
-	defer ticker.Stop()
 
-	for p.reversePlaying {
-		<-ticker.C
-		if !p.reversePlaying || p.frameCount == 0 {
-			continue
+	go func() {
+		for p.reversePlaying {
+			if p.frameCount == 0 {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			index := (p.lastShownFrame - 1 + p.frameCount) % p.frameCount
+			p.showFrame(index)
+			p.currentFrame = index
+
+			// 每次都读取最新的播放速率
+			time.Sleep(p.frameRate)
 		}
-		index := (p.lastShownFrame - 1 + p.frameCount) % p.frameCount
-		p.showFrame(index)
-		p.currentFrame = index
-	}
+	}()
 }
 
 func (p *FramePlayer) toggleReversePlayPause() {
@@ -366,16 +369,20 @@ func (p *FramePlayer) updateFrameInfoLabel(index int) {
 	})
 }
 
+// :TODO: 文本超出范围的区域无法出现滚动条，但其实也不需要滚动条。
 func (p *FramePlayer) makeTextView(content string) fyne.CanvasObject {
 	lines := strings.Split(content, "\n")
 	var items []fyne.CanvasObject
+	y := float32(0)
 	for _, line := range lines {
 		t := canvas.NewText(line, theme.Color(theme.ColorNameForeground))
 		t.TextStyle = fyne.TextStyle{Monospace: true}
 		t.TextSize = float32(p.fontSize)
+		t.Move(fyne.NewPos(0, y))
 		items = append(items, t)
+		y += t.TextSize // 累加高度以紧密排列
 	}
-	return container.NewVBox(items...)
+	return container.NewWithoutLayout(items...)
 }
 
 func renderSVGToObject(path string, want fyne.Size) fyne.CanvasObject {
@@ -561,18 +568,23 @@ func (p *FramePlayer) ShowContent(obj fyne.CanvasObject) {
 func (p *FramePlayer) playFrames() {
 	p.playing = true
 	p.updatePlayPauseIcon()
-	ticker := time.NewTicker(p.frameRate)
-	defer ticker.Stop()
 
-	for p.playing {
-		<-ticker.C
-		if !p.playing || p.frameCount == 0 {
-			continue
+	go func() {
+		for p.playing {
+			if p.frameCount == 0 {
+				time.Sleep(100 * time.Millisecond)
+				continue
+			}
+			index := (p.lastShownFrame + 1) % p.frameCount
+			p.showFrame(index)
+			p.currentFrame = index
+
+			// Ticker 会自动补偿时间差值，帧率更加稳定。
+			// Ticker 适合高帧率的场景，当前情况下我们用Sleep足够
+			// 每次都读取最新的播放速率
+			time.Sleep(p.frameRate)
 		}
-		index := (p.lastShownFrame + 1) % p.frameCount
-		p.showFrame(index)
-		p.currentFrame = index
-	}
+	}()
 }
 
 func (p *FramePlayer) togglePlayPause() {
@@ -882,7 +894,10 @@ func (p *FramePlayer) SetupUI() fyne.CanvasObject {
 	})
 	stopBtn := widget.NewButtonWithIcon("", theme.MediaStopIcon(), func() {
 		p.playing = false
+		p.reversePlaying = false
 		p.updatePlayPauseIcon()
+		p.updateReversePlayIcon()
+
 		if p.frameCount == 0 {
 			return
 		}
@@ -890,6 +905,7 @@ func (p *FramePlayer) SetupUI() fyne.CanvasObject {
 		p.showFrame(p.currentFrame)
 		p.currentFrame = p.lastShownFrame
 	})
+
 	prevBtn := widget.NewButtonWithIcon("", theme.MediaSkipPreviousIcon(), func() {
 		if p.frameCount == 0 {
 			return
@@ -1098,7 +1114,8 @@ func (p *FramePlayer) showDirSelector(start string) {
 
 		accum := rootPath
 		for _, seg := range segments {
-			bar.Add(widget.NewLabel("/"))
+			// bar.Add(widget.NewLabel("/"))
+			bar.Add(widget.NewLabel(""))
 			accum = filepath.Join(accum, seg)
 			segPath := accum
 			btn := widget.NewButton(seg, func() {
@@ -1309,11 +1326,6 @@ func (p *FramePlayer) BindRuneEvents(canvas fyne.Canvas) {
 }
 
 func (p *FramePlayer) showExportGIFDialog() {
-	if p.frameCount == 0 {
-		dialog.ShowInformation("导出 GIF", "请先打开包含帧的目录。", p.window)
-		return
-	}
-
 	fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 		if err != nil || writer == nil {
 			return
@@ -1327,33 +1339,39 @@ func (p *FramePlayer) showExportGIFDialog() {
 
 		// 自定义进度弹窗
 		bar := widget.NewProgressBarInfinite()
-		msg := widget.NewLabel("正在导出，请稍候...")
+		msg := widget.NewLabel("Exporting in progress, please wait...")
 		content := container.NewVBox(msg, bar)
-		prog := dialog.NewCustomWithoutButtons("导出 GIF", content, p.window)
+		prog := dialog.NewCustomWithoutButtons("Export GIF", content, p.window)
 
-		bar.Start()
-		prog.Show()
+		// 显示进度条（主线程）
+		fyne.Do(func() {
+			bar.Start()
+			prog.Show()
+		})
 
+		// 后台导出任务
 		go func() {
 			err := p.ExportGIF(path)
 
-			p.app.SendNotification(&fyne.Notification{
-				Title:   "导出完成",
-				Content: "GIF 已导出：" + path,
+			// 所有 UI 操作必须在主线程中执行
+			fyne.Do(func() {
+				bar.Stop()
+				prog.Hide()
+
+				if err != nil {
+					dialog.ShowError(err, p.window)
+				} else {
+					p.app.SendNotification(&fyne.Notification{
+						Title:   "Export completed",
+						Content: "GIF has been exported: " + path,
+					})
+					// dialog.ShowInformation("Export GIF", "Export completed: \n"+path, p.window)
+				}
 			})
-
-			bar.Stop()
-			prog.Hide()
-
-			if err != nil {
-				dialog.ShowError(err, p.window)
-				// } else {
-				// 	dialog.ShowInformation("导出 GIF", "导出完成：\n"+path, p.window)
-			}
 		}()
 	}, p.window)
 
-	fd.SetFilter(storage.NewExtensionFileFilter([]string{".gif"}))
+	fd.SetFileName("output.gif")
 	fd.Show()
 }
 
@@ -1475,7 +1493,7 @@ func (p *FramePlayer) prepareFontFace() (font.Face, int, error) {
 		if err == nil {
 			ft, err := opentype.Parse(data)
 			if err == nil {
-				adjustedSize := adjustFontSizeForExport(p.fontSize)
+				adjustedSize := adjustFontSizeForExport(p.fontSize, ft)
 				face, err := opentype.NewFace(ft, &opentype.FaceOptions{
 					Size:    float64(adjustedSize),
 					DPI:     96,
@@ -1512,8 +1530,8 @@ func (p *FramePlayer) measureFrame(path string, face font.Face, lineH int) (int,
 				maxAdvance = adv
 			}
 		}
-		w := (maxAdvance.Ceil()) + 16 // 左右各留 8px
-		h := (len(lines)*lineH + 16)  // 上下各留 8px
+		w := (maxAdvance.Ceil())
+		h := (len(lines) * lineH)
 		if w < 1 {
 			w = 1
 		}
@@ -1716,16 +1734,52 @@ func (p *FramePlayer) drawErrorText(dst *image.RGBA, msg string, fg color.Color,
 	}
 }
 
-// 由于字体渲染问题，某些大小的字体导出后双宽字符无法对齐。
-func adjustFontSizeForExport(size int) int {
-	switch size % 5 {
-	case 2:
-		return size - 1
-	case 3:
-		return size + 1
-	default:
+func adjustFontSizeForExport(size int, ft *opentype.Font) int {
+	// 检查当前字号是否对齐
+	if isDoubleWidthAligned(ft, size) {
+		// fmt.Printf("当前字号 %d 已对齐，无需调整\n", size)
 		return size
 	}
+
+	// 尝试上下浮动 ±3 的字号
+	for offset := 1; offset <= 3; offset++ {
+		if isDoubleWidthAligned(ft, size-offset) {
+			// fmt.Printf("字号 %d 未对齐，调整为 %d（向下修正）\n", size, size-offset)
+			return size - offset
+		}
+		if isDoubleWidthAligned(ft, size+offset) {
+			// fmt.Printf("字号 %d 未对齐，调整为 %d（向上修正）\n", size, size+offset)
+			return size + offset
+		}
+	}
+
+	// 都不满足，返回原始字号
+	// fmt.Printf("字号 %d 无法对齐，使用原始字号\n", size)
+	return size
+}
+
+// 检查双宽字符是否是英文字符宽度的两倍
+func isDoubleWidthAligned(ft *opentype.Font, fontSize int) bool {
+	face, err := opentype.NewFace(ft, &opentype.FaceOptions{
+		Size:    float64(fontSize),
+		DPI:     96,
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		return false
+	}
+	defer func() {
+		_ = face // opentype.NewFace 返回 font.Face，无需关闭
+	}()
+
+	advanceA, okA := face.GlyphAdvance('A')
+	advanceDouble, okDouble := face.GlyphAdvance('你')
+
+	if !okA || !okDouble {
+		return false // 无法测量字符宽度，返回不对齐
+	}
+
+	return advanceDouble.Round() == 2*advanceA.Round()
 }
 
 // 将 RGBA 转换为调色板图像（GIF 需要）
@@ -1743,7 +1797,7 @@ func imageToPaletted(src image.Image) *image.Paletted {
 	b := src.Bounds()
 	dst := image.NewPaletted(b, palette)
 
-	// 使用 Floyd-Steinberg 抖动（如果你想替换这个，也可以）
+	// 使用 Floyd-Steinberg 抖动
 	draw.FloydSteinberg.Draw(dst, b, src, image.Point{})
 	return dst
 }
