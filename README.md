@@ -47,3 +47,15 @@ export PATH=${PATH}:/d/programs/imagemagick
 export PATH=$PATH:/c/users/xx/go/bin
 ```
 
+总结起来可能是下面这样(依你的目录结构决定):
+
+```bash
+echo 'export PATH=${PATH}:/d/Go/bin' >> ~/.bashrc
+echo 'export PATH=${PATH}:/d/programes/imagemagick' >> ~/.bashrc
+echo 'export PATH=${PATH}:/c/Users/pc/go' >> ~/.bashrc
+echo 'export PATH=${PATH}:/c/Users/pc/go/bin' >> ~/.bashrc
+source ~/.bashrc
+```
+
+编译前环境中需要有`make`和`gcc`工具，请先安装工具后再编译。
+
