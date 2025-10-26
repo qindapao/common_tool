@@ -5,10 +5,11 @@ COM_MES      := bin/com_mes
 COM_TSD      := bin/com_tsd
 GOBOLT       := bin/gobolt
 GOBOLT_ARM64 := bin/gobolt-linux-arm64
+GOBOLT_AMD64 := bin/gobolt-linux-amd64
 ASCIIPLAY 	:= bin/AsciiMotionPlayer_console
 ASCIIPLAY_GUI := bin/AsciiMotionPlayer.exe
 
-.PHONY: help tidy all test test-com_mes test-com_tsd test-gobolt build-arm64 clean
+.PHONY: help tidy all test test-com_mes test-com_tsd test-gobolt build-arm64 build-amd64 clean
 
 help:
 	@echo "可用命令:"
@@ -20,6 +21,7 @@ help:
 	@echo "  test-asciiplay   - 构建并测试 asciiplay"
 	@echo "  test-gobolt      - 构建并测试 gobolt (本地 Windows 可执行)"
 	@echo "  build-arm64      - 只交叉编译 gobolt 为 Linux/ARM64"
+	@echo "  build-amd64      - 只交叉编译 gobolt 为 Linux/AMD64"
 	@echo "  clean            - 清理所有生成文件"
 
 # 统一执行 `go mod tidy`
@@ -28,7 +30,7 @@ tidy:
 	go mod tidy
 
 # 默认构建：com_mes, com_tsd, gobolt(Win), gobolt-Linux-ARM64
-all: $(COM_MES) $(COM_TSD) $(GOBOLT) $(GOBOLT_ARM64) $(ASCIIPLAY) $(ASCIIPLAY_GUI)
+all: $(COM_MES) $(COM_TSD) $(GOBOLT) $(GOBOLT_ARM64) $(GOBOLT_AMD64) $(ASCIIPLAY) $(ASCIIPLAY_GUI)
 
 # 构建并测试
 test: test-com_mes test-com_tsd test-gobolt test-asciiplay
@@ -72,8 +74,17 @@ $(GOBOLT_ARM64): tidy
 	@echo "交叉编译 gobolt 为 Linux/ARM64..."
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o $(GOBOLT_ARM64) ./cmd/gobolt
 
+# gobolt Linux/x86_64 交叉编译 (纯 Go，不启用 CGO)
+$(GOBOLT_AMD64): tidy
+	@echo "交叉编译 gobolt 为 Linux/x86_64..."
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o $(GOBOLT_AMD64) ./cmd/gobolt
+
+
 # 专门做 ARM64 构建
 build-arm64: $(GOBOLT_ARM64)
+
+# 专门做 AMD64 构建
+build-amd64: $(GOBOLT_AMD64)
 
 # 构建并复制到测试目录（可根据实际需求开启/注释）
 test-asciiplay: $(ASCIIPLAY) $(ASCIIPLAY_GUI)
