@@ -1,6 +1,7 @@
 package qqjson
 
 import (
+	"common_tool/pkg/errorutil"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,8 +12,6 @@ import (
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
-
-// :TODO: 需要增加输出到一行 JSON 的功能
 
 // 数组和字典指定写入可以不在这个工具中做
 // 在bash中自己处理
@@ -444,7 +443,12 @@ func (opts *CLIOptions) readValueFromJSON() error {
 		}
 	}
 
-	return formatter.Format(result, opts.VarName, opts.JSONFormat)
+	errFormatter := formatter.Format(result, opts.VarName, opts.JSONFormat)
+
+	if errFormatter.CmdExitCode == errorutil.CodeSuccess {
+		return nil
+	}
+	return errFormatter
 }
 
 // ./gobolt -w a1.Data9.xx\\.yy -d xx -f result2.jso
