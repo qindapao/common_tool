@@ -39,6 +39,19 @@ type JSONFormat string
 const (
 	JSONFormatOne JSONFormat = "one"
 	JSONFormatMul JSONFormat = "mul"
+
+	JSONTypeNull    = 1
+	JSONTypeTrue    = 2
+	JSONTypeFalse   = 3
+	JSONTypeNumber  = 4
+	JSONTypeString  = 5
+	JSONTypeArray   = 6
+	JSONTypeObject  = 7
+	JSONTypeUnknown = 8
+
+	JSONErrNotValidJsonStr = 9
+	JSONErrFormatFail      = 10
+	JSONPrettyFail         = 11
 )
 
 // 为了让 VarP 接收自定义类型，实现 flag.Value 接口(String Set Type)即可：
@@ -71,6 +84,7 @@ func (JSONFormat) Values() []string {
 func qJsonEscapeAndJoin(paths []string) string {
 	escaped := make([]string, len(paths))
 	for i, p := range paths {
+		p = strings.ReplaceAll(p, `\`, `\\`)
 		p = strings.ReplaceAll(p, ".", `\.`)
 		p = strings.ReplaceAll(p, "[", `\[`)
 		p = strings.ReplaceAll(p, "]", `\]`)
@@ -85,11 +99,47 @@ func JsonCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "json",
-		Short: "处理 JSON 的读取、写入、删除",
-		Long: `处理 JSON 的读取、写入、删除
+		Short: "处理 JSON 的读取、写入、删除、属性读取",
+		Long: `处理 JSON 的读取、写入、删除、属性读取
 Examples:
+1. 属性读取
 
-1. 读取
+以下面的 JSON 文件为例进行说明
+{
+    "key1": {
+        "key2": {
+            "key3": [
+                null,
+                null,
+                {
+                    "other1": "xx",
+                    "other2": 2,
+					"True": true,
+					"False": false,
+					"Num": 145.3,
+					"str": "xxx",
+					"null": null
+                }
+            ]
+        }
+    }
+}
+gobolt json -l "/dev/null" -m r -t type -k file -i demo.json -p key1.key2.1
+gobolt json -l "/dev/null" -m r -t type -k str -i "$json_str" -p key1.key2.1
+
+命令的退出码说明:
+	JSONTypeNull    = 1
+	JSONTypeTrue    = 2
+	JSONTypeFalse   = 3
+	JSONTypeNumber  = 4
+	JSONTypeString  = 5
+	JSONTypeArray   = 6
+	JSONTypeObject  = 7
+	JSONTypeUnknown = 8
+
+上面的情况, $? 为 7, 因为退出码不是 0 , 所以使用 /dev/null 抑制日志输出。
+
+2. 读取内容
 
 以下面的 JSON 文件为例进行说明
 {
@@ -151,7 +201,7 @@ declare -a var1=([0]="" [1]="" [2]="" [3]=$'{\n                "key4": "value1",
 
 
 
-2. 写入
+3. 写入
 
 (1). sjson路径写入
 
@@ -251,7 +301,7 @@ gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].4 -j '{
 上面的含义是把 deme.json 中的内容追加到 demo.json 中的 key1.key3 键里面。
 
 
-3. 删除
+4. 删除
 
 删除一个键很简单。
 
@@ -321,7 +371,7 @@ gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].4 -j '{
 	cmd.Flags().BoolVarP(&opts.UseArgPath, "argpath", "P", false, "从命令行中读取路径（需置于最后，空格分隔，强烈建议都用这种格式）")
 	cmd.Flags().StringVarP(&opts.Kind, "kind", "k", "", "json来源类别（默认 stdin / file / str）")
 	cmd.Flags().StringVarP(&opts.InArg, "inarg", "i", "", "json来源的值")
-	cmd.Flags().StringVarP(&opts.Format, "format", "t", "txt", "输出格式：txt/sh")
+	cmd.Flags().StringVarP(&opts.Format, "format", "t", "txt", "输出格式：txt/sh/type")
 	cmd.Flags().StringVarP(&opts.VarName, "varname", "v", "RESULT", "sh 输出变量名")
 	cmd.Flags().StringVarP(&opts.StrInput, "strinput", "s", "", "写入的字符串值")
 	cmd.Flags().StringVarP(&opts.JSONInput, "jsoninput", "j", "", "写入的 JSON 字符串")
@@ -394,9 +444,7 @@ func (opts *CLIOptions) readValueFromJSON() error {
 		}
 	}
 
-	formatter.Format(result, opts.VarName, opts.JSONFormat)
-
-	return nil
+	return formatter.Format(result, opts.VarName, opts.JSONFormat)
 }
 
 // ./gobolt -w a1.Data9.xx\\.yy -d xx -f result2.jso
