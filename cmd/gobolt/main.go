@@ -52,9 +52,11 @@ func main() {
 
 	exitCode := errorutil.CodeSuccess
 	if err := rootCmd.Execute(); err != nil {
-		errJsonStr, code := errorutil.FormatErrorAndCode(err)
+		errJsonStr, code, oriCode := errorutil.FormatErrorAndCode(err)
 		exitCode = code
-		logutil.Error(errJsonStr)
+		if oriCode != errorutil.CodeSuccess {
+			logutil.Error(errJsonStr)
+		}
 	}
 	logutil.CloseLogger()
 	os.Exit(exitCode)

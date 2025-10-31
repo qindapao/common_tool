@@ -1,55 +1,43 @@
 package qqjson
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"common_tool/pkg/errorutil"
 	"common_tool/pkg/sh"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/pretty"
 )
 
+const maxCharsPerLine = 80
+
 type OutputFormatter interface {
-	Format(res gjson.Result, varName string, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode
-	// 可选: 用于错误退出前执行的清理
-	Cleanup(varName string)
+	Format(res gjson.Result, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode
 }
 
 type BashFormatter struct{}
 
-func (f BashFormatter) Format(res gjson.Result, varName string, _ JSONFormat) *errorutil.ExitErrorWithCode {
-	return outputBash(varName, res)
-}
-
-func (f BashFormatter) Cleanup(varName string) {
-	if varName == "" {
-		varName = "RESULT"
-	}
-	// 再次 unset 只是示意，具体逻辑你可根据需要调整
-	fmt.Printf("unset -v %s\n", varName)
+func (f BashFormatter) Format(res gjson.Result, _ JSONFormat) *errorutil.ExitErrorWithCode {
+	return outputBash(res)
 }
 
 type TextFormatter struct{}
 
-func (f TextFormatter) Format(res gjson.Result, _ string, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode {
+func (f TextFormatter) Format(res gjson.Result, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode {
 	return outputText(res, jsonFormat)
-}
-
-func (f TextFormatter) Cleanup(varName string) {
-	// 空实现，不做任何事
 }
 
 type TypeFormatter struct{}
 
-func (f TypeFormatter) Format(res gjson.Result, _ string, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode {
+func (f TypeFormatter) Format(res gjson.Result, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode {
 	return outputType(res)
-}
-
-func (f TypeFormatter) Cleanup(varName string) {
-	// 空实现，不做任何事
 }
 
 var formatters = map[string]OutputFormatter{
@@ -58,16 +46,105 @@ var formatters = map[string]OutputFormatter{
 	"type": TypeFormatter{},
 }
 
-type JSONFormatter func(any) ([]byte, error)
+func writeCustomJSON(buf *bytes.Buffer, v any, indent int) {
+	indentStr := strings.Repeat(" ", indent)
+	switch val := v.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(val))
+		for k := range val {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
 
-var JsonFormatters = map[JSONFormat]JSONFormatter{
-	JSONFormatMul: func(v any) ([]byte, error) { return json.MarshalIndent(v, "", "    ") },
-	JSONFormatOne: func(v any) ([]byte, error) { return json.Marshal(v) },
+		for _, k := range keys {
+			v2 := val[k]
+			keyLines := strings.Split(k, "\n")
+			for i, kl := range keyLines {
+				if i < len(keyLines)-1 {
+					fmt.Fprintf(buf, "%s%s\n", indentStr, kl)
+				} else {
+					if isLeaf(v2) {
+						fmt.Fprintf(buf, "%s%s => ", indentStr, kl)
+						writeLeaf(buf, v2, indent+4)
+					} else {
+						fmt.Fprintf(buf, "%s%s => \n", indentStr, kl)
+						writeCustomJSON(buf, v2, indent+4)
+					}
+				}
+			}
+		}
+	case []any:
+		for i, item := range val {
+			if isLeaf(item) {
+				fmt.Fprintf(buf, "%s[%d] = ", indentStr, i)
+				writeLeaf(buf, item, indent+4)
+			} else {
+				fmt.Fprintf(buf, "%s[%d] = \n", indentStr, i)
+				writeCustomJSON(buf, item, indent+4)
+			}
+		}
+	default:
+		writeLeaf(buf, val, indent)
+	}
+}
+
+func isLeaf(v any) bool {
+	switch val := v.(type) {
+	case map[string]any:
+		return len(val) == 0
+	case []any:
+		return len(val) == 0
+	default:
+		return true
+	}
+}
+
+func writeLeaf(buf *bytes.Buffer, v any, indent int) {
+	indentStr := strings.Repeat(" ", indent)
+	switch val := v.(type) {
+	case string:
+		lines := strings.Split(val, "\n")
+		if len(lines) == 1 {
+			fmt.Fprintf(buf, "s:%s\n", val)
+		} else {
+			fmt.Fprintf(buf, "s:%s\n", lines[0])
+			for _, line := range lines[1:] {
+				fmt.Fprintf(buf, "%s%s\n", indentStr, line)
+			}
+		}
+	case float64:
+		fmt.Fprintf(buf, "i:%v\n", val)
+	case bool:
+		if val {
+			fmt.Fprintf(buf, "t:true\n")
+		} else {
+			fmt.Fprintf(buf, "f:false\n")
+		}
+	case nil:
+		fmt.Fprintf(buf, "n:null\n")
+	case []any:
+		fmt.Fprintf(buf, "a:[]\n")
+	case map[string]any:
+		fmt.Fprintf(buf, "o:{}\n")
+	default:
+		fmt.Fprintf(buf, "unknown type\n")
+	}
 }
 
 // 命令的退出码输出对象类型
 func outputType(res gjson.Result) *errorutil.ExitErrorWithCode {
 	typeErr := &errorutil.ExitErrorWithCode{Code: errorutil.CodeSuccess, Message: "", Err: nil, CmdExitCode: errorutil.CodeSuccess}
+
+	var typeMap = map[gjson.Type]struct {
+		Code    int
+		Message string
+	}{
+		gjson.String: {JSONTypeString, "string"},
+		gjson.Number: {JSONTypeNumber, "number"},
+		gjson.Null:   {JSONTypeNull, "null"},
+		gjson.True:   {JSONTypeTrue, "true"},
+		gjson.False:  {JSONTypeFalse, "false"},
+	}
 
 	if res.IsObject() {
 		typeErr.CmdExitCode = JSONTypeObject
@@ -75,21 +152,9 @@ func outputType(res gjson.Result) *errorutil.ExitErrorWithCode {
 	} else if res.IsArray() {
 		typeErr.CmdExitCode = JSONTypeArray
 		typeErr.Message = "array"
-	} else if res.Type == gjson.String {
-		typeErr.CmdExitCode = JSONTypeString
-		typeErr.Message = "string"
-	} else if res.Type == gjson.Number {
-		typeErr.CmdExitCode = JSONTypeNumber
-		typeErr.Message = "number"
-	} else if res.Type == gjson.Null {
-		typeErr.CmdExitCode = JSONTypeNull
-		typeErr.Message = "null"
-	} else if res.Type == gjson.True {
-		typeErr.CmdExitCode = JSONTypeTrue
-		typeErr.Message = "true"
-	} else if res.Type == gjson.False {
-		typeErr.CmdExitCode = JSONTypeFalse
-		typeErr.Message = "false"
+	} else if info, ok := typeMap[res.Type]; ok {
+		typeErr.CmdExitCode = info.Code
+		typeErr.Message = info.Message
 	} else {
 		typeErr.CmdExitCode = JSONTypeUnknown
 		typeErr.Message = "unknown"
@@ -98,73 +163,158 @@ func outputType(res gjson.Result) *errorutil.ExitErrorWithCode {
 	return typeErr
 }
 
-// 使用 declare 确保是局部变量
-func outputBash(name string, res gjson.Result) *errorutil.ExitErrorWithCode {
-
-	err := &errorutil.ExitErrorWithCode{Code: errorutil.CodeSuccess, Message: "", Err: nil, CmdExitCode: errorutil.CodeSuccess}
-
-	if name == "" {
-		name = "RESULT"
+func prefixValue(v gjson.Result) string {
+	var prefix string
+	suffix := v.String()
+	switch {
+	case v.IsObject():
+		prefix = "o:"
+	case v.IsArray():
+		prefix = "a:"
+	default:
+		switch v.Type {
+		case gjson.String:
+			prefix = "s:"
+		case gjson.Number:
+			prefix = "i:"
+		case gjson.True:
+			prefix = "t:"
+		case gjson.False:
+			prefix = "f:"
+		case gjson.Null:
+			prefix = "n:"
+			suffix = v.Raw
+		default:
+			prefix = "u:"
+		}
 	}
+	return prefix + suffix
+}
+
+// 使用 declare 确保是局部变量
+// s: 字符串
+// i: 数字
+// f: bool false
+// t: bool true
+// o: 对象
+// a: 数组
+// n: null
+// declare -A mymap=(
+//     ["name"]="s:Alice"
+//     ["age"]="i:30"
+//     ["active"]="t:true"
+//     ["active2"]="f:false"
+//     ["profile"]="o:{\"email\":\"alice@example.com\"}"
+//     ["tags"]="a:[\"dev\",\"ops\"]"
+//     ["deleted"]="n:null"
+// )
+
+func outputBash(res gjson.Result) *errorutil.ExitErrorWithCode {
+
+	// 创建一个和数组/对象大小一摸一样的切片避免扩容提升性能
+	// 其它对象返回0,就是一个空切片
+	parts := make([]string, 0, res.Get("#").Int())
 
 	if res.IsArray() {
-		var parts []string
 		res.ForEach(func(_, v gjson.Result) bool {
-			parts = append(parts, sh.BashANSIQuote(v.String()))
+			parts = append(parts, sh.BashANSIQuote(prefixValue(v)))
 			return true
 		})
-		fmt.Printf("unset -v %s ; declare -a %s=(%s)\n", name, name, strings.Join(parts, " "))
-		return err
-	}
-
-	if res.IsObject() {
-		fmt.Printf("unset -v %s ; declare -A %s=(\n", name, name)
+		fmt.Printf("%s", strings.Join(parts, " "))
+	} else if res.IsObject() {
 		res.ForEach(func(k, v gjson.Result) bool {
-			key := sh.BashANSIQuote(k.String())
-			val := sh.BashANSIQuote(v.String())
-			fmt.Printf("    [%s]=%s\n", key, val)
+			parts = append(parts, fmt.Sprintf("[%s]=%s",
+				sh.BashANSIQuote(k.String()),
+				sh.BashANSIQuote(prefixValue(v)),
+			))
 			return true
 		})
-		fmt.Println(")")
-		return err
+		fmt.Printf("%s", strings.Join(parts, " "))
+	} else {
+		// 这里不处理null,因为会和字符串的null冲突
+		// 结尾增加一个补充字符是为了防止Bash中$()自动去掉结尾的换行符行为
+		fmt.Printf("%sX", res.String())
 	}
 
-	// 原始值(确保是局部变量)
-	fmt.Printf("unset -v %s ; declare %s=%s\n", name, name, sh.BashANSIQuote(res.String()))
-	return err
+	return outputType(res)
+}
+
+func formatJSON(data []byte, format JSONFormat) []byte {
+	switch format {
+	case JSONFormatMul:
+		return pretty.PrettyOptions(data, &pretty.Options{
+			Indent:   "    ",
+			SortKeys: true,
+			Width:    0,
+			Prefix:   "",
+		})
+	case JSONFormatOne:
+		return pretty.Ugly(data)
+	case JSONFormatRaw:
+		return data
+	case JSONFormatHuman:
+		var raw any
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Appendf(nil, "error: %v", err)
+		}
+		var buf bytes.Buffer
+		buf.WriteString("\n--- Human JSON ---\n")
+		writeCustomJSON(&buf, raw, 4)
+
+		rawJSON := pretty.Ugly(data)
+		writeWrappedRawJSON(&buf, rawJSON)
+
+		return buf.Bytes()
+	default:
+		return data
+	}
+}
+
+func writeWrappedRawJSON(buf *bytes.Buffer, raw []byte) {
+	buf.WriteString("--- RAW JSON(convert multiple lines into a single line before parsing.) ---\n")
+
+	line := bytes.Buffer{}
+	charCount := 0
+	for len(raw) > 0 {
+		r, size := utf8.DecodeRune(raw)
+		if r == utf8.RuneError && size == 1 {
+			// Invalid UTF-8 byte, write as-is
+			line.WriteByte(raw[0])
+			raw = raw[1:]
+		} else {
+			line.Write(raw[:size])
+			raw = raw[size:]
+		}
+		charCount++
+
+		if charCount >= maxCharsPerLine {
+			line.WriteString("\n")
+			buf.Write(line.Bytes())
+			line.Reset()
+			charCount = 0
+		}
+	}
+	if line.Len() > 0 {
+		line.WriteString("\n")
+		buf.Write(line.Bytes())
+	}
 }
 
 func outputText(res gjson.Result, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode {
-	str := res.Raw // 更安全的方式获取原始 JSON 字符串
+	raw := []byte(res.Raw)
+	errInit := &errorutil.ExitErrorWithCode{
+		Code:        errorutil.CodeSuccess,
+		Message:     "",
+		Err:         nil,
+		CmdExitCode: errorutil.CodeSuccess}
 
-	errInit := &errorutil.ExitErrorWithCode{Code: errorutil.CodeSuccess, Message: "", Err: nil, CmdExitCode: errorutil.CodeSuccess}
+	_, err := os.Stdout.Write(formatJSON(raw, jsonFormat))
+	errInit.Err = err
 
-	var pretty any
-	if err := json.Unmarshal([]byte(str), &pretty); err != nil {
-		// 如果不是有效 JSON，就直接打印原始字符串
-		fmt.Println(res.String())
-		errInit.Message = "Not a valid JSON string"
-		errInit.Err = err
-		errInit.CmdExitCode = JSONErrNotValidJsonStr
-		return errInit
-	}
-
-	f, ok := JsonFormatters[jsonFormat]
-	if !ok {
-		errInit.Message = "format fail"
-		errInit.CmdExitCode = JSONErrFormatFail
-		return errInit
-	}
-	formatted, err := f(pretty)
 	if err != nil {
-		// 出错时也回退打印原始值
-		fmt.Println(res.String())
-		errInit.Message = "json pretty fail"
-		errInit.CmdExitCode = JSONPrettyFail
+		errInit.Code = errorutil.CodeIOError
 		return errInit
 	}
-
-	os.Stdout.Write(formatted)
-	return errInit
+	return outputType(res)
 	// }
 }

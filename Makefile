@@ -1,6 +1,9 @@
 # Makefile for cygwin 环境
 # 支持本机 Windows 可执行和交叉编译 Linux/ARM64
 
+GJSON_VER := $(shell grep 'github.com/tidwall/gjson' go.mod | awk '{print $$2}')
+SJSON_VER := $(shell grep 'github.com/tidwall/sjson' go.mod | awk '{print $$2}')
+PRETY_VER := $(shell grep 'github.com/tidwall/pretty' go.mod | awk '{print $$2}')
 COM_MES      := bin/com_mes
 COM_TSD      := bin/com_tsd
 GOBOLT       := bin/gobolt
@@ -67,17 +70,29 @@ $(COM_TSD): tidy
 # gobolt (本机 Windows 可执行)
 $(GOBOLT): tidy
 	@echo "构建 gobolt (本机 Windows 可执行)..."
-	go build -ldflags="-s -w" -o $(GOBOLT) ./cmd/gobolt
+	go build -ldflags="-s -w \
+		-X 'common_tool/pkg/qqjson.GjsonVersion=$(GJSON_VER)' \
+		-X 'common_tool/pkg/qqjson.PrettyVersion=$(PRETY_VER)' \
+		-X 'common_tool/pkg/qqjson.SjsonVersion=$(SJSON_VER)'" \
+		-o $(GOBOLT) ./cmd/gobolt
 
 # gobolt Linux/ARM64 交叉编译 (纯 Go，不启用 CGO)
 $(GOBOLT_ARM64): tidy
 	@echo "交叉编译 gobolt 为 Linux/ARM64..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o $(GOBOLT_ARM64) ./cmd/gobolt
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w \
+				-X 'common_tool/pkg/qqjson.GjsonVersion=$(GJSON_VER)' \
+				-X 'common_tool/pkg/qqjson.PrettyVersion=$(PRETY_VER)' \
+				-X 'common_tool/pkg/qqjson.SjsonVersion=$(SJSON_VER)'" \
+				-o $(GOBOLT_ARM64) ./cmd/gobolt
 
 # gobolt Linux/x86_64 交叉编译 (纯 Go，不启用 CGO)
 $(GOBOLT_AMD64): tidy
 	@echo "交叉编译 gobolt 为 Linux/x86_64..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o $(GOBOLT_AMD64) ./cmd/gobolt
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w \
+			-X 'common_tool/pkg/qqjson.GjsonVersion=$(GJSON_VER)' \
+			-X 'common_tool/pkg/qqjson.PrettyVersion=$(PRETY_VER)' \
+			-X 'common_tool/pkg/qqjson.SjsonVersion=$(SJSON_VER)'" \
+			-o $(GOBOLT_AMD64) ./cmd/gobolt
 
 
 # 专门做 ARM64 构建

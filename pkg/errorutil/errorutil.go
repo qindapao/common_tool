@@ -127,24 +127,24 @@ func NewCmdFailure(cmdExitCode int, message string, err error) error {
 	}
 }
 
-func FormatErrorAndCode(err error) (string, int) {
+func FormatErrorAndCode(err error) (string, int, int) {
 	// 默认退出码是内部错误
-	code := CodeInternalErr
+	exitCode := CodeInternalErr
 	switch e := err.(type) {
 	case *ExitErrorWithCode:
 		// 优先使用命令原始退出码（如果设置），否则用结构化错误码
-		if e.CmdExitCode != 0 {
-			code = e.CmdExitCode
+		if e.CmdExitCode != CodeSuccess {
+			exitCode = e.CmdExitCode
 		} else {
-			code = e.Code
+			exitCode = e.Code
 		}
-		return e.JSON(), code
+		return e.JSON(), exitCode, e.Code
 	default:
 		// 构建一个临时 ExitErrorWithCode 对象，并直接调用其 JSON() 方法
 		return (&ExitErrorWithCode{
-			Code:    code,
+			Code:    exitCode,
 			Message: "未知错误",
 			Err:     err,
-		}).JSON(), code
+		}).JSON(), exitCode, exitCode
 	}
 }

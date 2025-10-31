@@ -15,6 +15,7 @@ require (
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	github.com/tiaguinho/gosoap v1.4.4
 	github.com/tidwall/gjson v1.18.0
+	github.com/tidwall/pretty v1.2.0
 	github.com/tidwall/sjson v1.2.5
 	golang.org/x/crypto v0.33.0
 	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b
@@ -50,7 +51,6 @@ require (
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/stretchr/testify v1.10.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
-	github.com/tidwall/pretty v1.2.0 // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/sys v0.30.0 // indirect

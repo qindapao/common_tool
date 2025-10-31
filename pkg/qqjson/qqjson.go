@@ -6,11 +6,21 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+)
+
+// :TODO: 需要增加输出到一行 JSON 的功能
+
+var (
+	GjsonVersion  string
+	SjsonVersion  string
+	PrettyVersion string
+	QqjsonVersion string = "v1.0.0"
 )
 
 // 数组和字典指定写入可以不在这个工具中做
@@ -21,7 +31,6 @@ type CLIOptions struct {
 	// 直接从参数中获取数据
 	InArg      string
 	Format     string
-	VarName    string
 	Path       string
 	UseArgPath bool
 	ArgPath    []string
@@ -36,8 +45,10 @@ type CLIOptions struct {
 type JSONFormat string
 
 const (
-	JSONFormatOne JSONFormat = "one"
-	JSONFormatMul JSONFormat = "mul"
+	JSONFormatOne   JSONFormat = "one"
+	JSONFormatMul   JSONFormat = "mul"
+	JSONFormatRaw   JSONFormat = "raw"
+	JSONFormatHuman JSONFormat = "human"
 
 	JSONTypeNull    = 1
 	JSONTypeTrue    = 2
@@ -58,7 +69,10 @@ func (f *JSONFormat) String() string { return string(*f) }
 
 func (f *JSONFormat) Set(val string) error {
 	switch val {
-	case string(JSONFormatMul), string(JSONFormatOne):
+	case string(JSONFormatMul),
+		string(JSONFormatOne),
+		string(JSONFormatRaw),
+		string(JSONFormatHuman):
 		*f = JSONFormat(val)
 		return nil
 	default:
@@ -75,7 +89,25 @@ func (JSONFormat) Values() []string {
 	return []string{
 		string(JSONFormatMul),
 		string(JSONFormatOne),
+		string(JSONFormatRaw),
+		string(JSONFormatHuman),
 	}
+}
+
+func qJsonEscape(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, ".", `\.`)
+	s = strings.ReplaceAll(s, "[", `\[`)
+	s = strings.ReplaceAll(s, "]", `\]`)
+	s = strings.ReplaceAll(s, "*", `\*`)
+	s = strings.ReplaceAll(s, "?", `\?`)
+	s = strings.ReplaceAll(s, "|", `\|`)
+	s = strings.ReplaceAll(s, "@", `\@`)
+	s = strings.ReplaceAll(s, "!", `\!`)
+	s = strings.ReplaceAll(s, "#", `\#`)
+	s = strings.ReplaceAll(s, "{", `\{`)
+	s = strings.ReplaceAll(s, "}", `\}`)
+	return s
 }
 
 // 嵌套创建的时候如果遇到数字键要强制设置为字典
@@ -83,11 +115,7 @@ func (JSONFormat) Values() []string {
 func qJsonEscapeAndJoin(paths []string) string {
 	escaped := make([]string, len(paths))
 	for i, p := range paths {
-		p = strings.ReplaceAll(p, `\`, `\\`)
-		p = strings.ReplaceAll(p, ".", `\.`)
-		p = strings.ReplaceAll(p, "[", `\[`)
-		p = strings.ReplaceAll(p, "]", `\]`)
-		escaped[i] = p
+		escaped[i] = qJsonEscape(p)
 	}
 	return strings.Join(escaped, ".")
 }
@@ -140,6 +168,9 @@ gobolt json -l "/dev/null" -m r -t type -k str -i "$json_str" -p key1.key2.1
 
 2. 读取内容
 
+读取命令除了读取出内容外，命令的返回码也体现出读取到的数据类型，类型码和上面列出
+的完全相同。
+
 以下面的 JSON 文件为例进行说明
 {
     "key1": {
@@ -159,46 +190,33 @@ gobolt json -m r -t txt -k file -i demo.json -p key1.key2
 效果是直接打印出 key2 数组的 JSON 字符串
 
 (2). 读取到bash数据结构
-gobolt json -m r -t sh -k file -i demo.json -p key1.key2.3.key4
-unset -v RESULT ; declare RESULT=$'value1'
 
-如果使用 bash 的 eval 命令，那么可以直接把变量赋值给一个指定的变量名
-eval -- "$(gobolt json -m r -t sh -k file -i demo.json -p key1.key2.3.key4 -v var1)"
+<a>. 读取到普通的字符串
+RESULT=$(gobolt json -m r -t sh -k file -i demo.json -p key1.key2.3.key4) ; RESULT=${RESULT%?}
 
-打印出变量的值可以看到正确赋值:
-declare -- var1="value1"
+这里 RESULT=${RESULT%?}的目的是删除字符串最后一个字符，因为$()这种方式默认会去掉字符
+串末尾所有的空格，为了保留原始数据，输出的数据中末尾会增加一个非空字符，这不是本来就
+该有的，所以我们要手动删除它。
 
-但是这里要注意下，使用 eval 包裹后的命令，无法再获取到原始命令的返回值，也就是 $? 不再准确
-解决方案有两个
-1). 是可以拆成两部执行:
-cmd=$(gobolt json -m r -t sh -k file -i demo.json -p key1.key2.3.key4 -v var1)
-ret=$?
-eval -- "$cmd"
+<b>. 读取到数组变量
 
-2). 可以判断变量的属性，因为执行失败的情况下，变量会被清除
+declare -a myarr=()
+eval -- myarr=($(gobolt json -m r -t sh -k file -i demo.json -p key1.key2))
 
-if [[ -z "${var1@A}" ]] ; then
-	# 如果变量没有任何属性，表示被 unset ，那么证明执行失败
-fi
+数组的括号中不能用""把$()引用起来，那样所有的输出会被当成一个数组元素。如果数组元素的
+某个值本身也是一个JSON对象那么可以获取这个值继续进行解码。
 
-如果不支持 @A 运算符，可以使用
-if [[ -z $(declare -p xx 2>/dev/null) ]] ; then
-	# 变量无法打印出来 
-fi
+<c>. 读取到关联数组变量
 
+declare -A mymap=()
+eval -- mymap=($(gobolt json -m r -t sh -k file -i demo.json -p key1.key2.3))
 
-除了可以自动读取到字符串变量外，还可以自动读取到 数组 变量，或者 关联数组 变量，以当前 JSON 层级具体的数据结构而定
+同样，关联数组中的括号中不能用""把$()引用起来。如果关联数组元素的某个值本身也是
+一个JOSN对象，那么可以获取这个值继续进行解码。
 
-eval -- "$(./gobolt json -m r -t sh -k file -i demo.json -p key1.key2 -v var1)"
+(3). 不美化输出的读取(默认以ugly的方式输出,节省空间)
 
-变量打印出来的效果
-
-declare -a var1=([0]="" [1]="" [2]="" [3]=$'{\n                "key4": "value1",\n                "specialkey.[]": "value1"\n            }')
-
-
-这个时候数组的值或者关联数组的值本身又是一个合法的JSON字符串，可以继续进行迭代处理。
-
-
+只需要在常规的读取命令里面加上: -F raw 选项即可。其它和上面的读取命令完全相同。
 
 3. 写入
 
@@ -309,6 +327,25 @@ gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].4 -j '{
 如果要删除顶级键或者索引
 
 ./gobolt json -m d -k file -i demo.json -p key1
+
+5. 普通字符串转换成合法的JSON字符串
+
+./gobolt json -m s -k str -i "$str"
+
+或者
+
+printf "%s" "str" | ./gobolt json -m s -k stdin
+
+转换结果会在标准输出中打印出来。
+
+6. 普通的字符串转换成合法的gjson的路径字符串(escape)
+
+./gobolt json -m e -k str -i "$str"
+
+或者
+
+printf "%s" "$str" | ./gobolt json -m e -k stdin
+转换结果会在标准输出中打印出来。
 		`,
 
 		// 如果子命令还想嵌套子命令可以下面这么干
@@ -357,6 +394,12 @@ gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].4 -j '{
 				return opts.modifyJSON(nil, func(jsonData []byte, path string, _ any) ([]byte, error) {
 					return sjson.DeleteBytes(jsonData, path)
 				})
+			case "s":
+				return opts.strToJsonStr()
+			case "e":
+				return opts.strToEscapeStr()
+			case "v":
+				return opts.printVer()
 			default:
 				return fmt.Errorf("未知模式: %q，请使用 r / w / d", opts.Mode)
 			}
@@ -365,13 +408,12 @@ gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].4 -j '{
 
 	// flag 定义
 	// :TODO: 是否需要做参数互斥检查？
-	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "r / w / d 操作模式")
+	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "r / w / d / s / e / v 操作模式")
 	cmd.Flags().StringVarP(&opts.Path, "path", "p", "", "gjson / sjson 原始路径，保留原始格式，但是并不建议使用，原因见范例")
 	cmd.Flags().BoolVarP(&opts.UseArgPath, "argpath", "P", false, "从命令行中读取路径（需置于最后，空格分隔，强烈建议都用这种格式）")
 	cmd.Flags().StringVarP(&opts.Kind, "kind", "k", "", "json来源类别（默认 stdin / file / str）")
 	cmd.Flags().StringVarP(&opts.InArg, "inarg", "i", "", "json来源的值")
 	cmd.Flags().StringVarP(&opts.Format, "format", "t", "txt", "输出格式：txt/sh/type")
-	cmd.Flags().StringVarP(&opts.VarName, "varname", "v", "RESULT", "sh 输出变量名")
 	cmd.Flags().StringVarP(&opts.StrInput, "strinput", "s", "", "写入的字符串值")
 	cmd.Flags().StringVarP(&opts.JSONInput, "jsoninput", "j", "", "写入的 JSON 字符串")
 	// 如果要写入的内容特别大只能通过文件传递进来
@@ -379,16 +421,70 @@ gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].4 -j '{
 	cmd.Flags().StringVarP(&opts.FileInput, "fileinput", "f", "", "写入的 JSON 文件")
 	// 输出的JSON文件的格式 (一行/多行美化打印)
 	opts.JSONFormat = JSONFormatMul
-	cmd.Flags().VarP(&opts.JSONFormat, "jsonformat", "F", "输出的 JSON 的格式(mul|one)，代表多行或者一行")
+	cmd.Flags().VarP(&opts.JSONFormat, "jsonformat", "F", "输出的 JSON 的格式(mul|one|raw|human)，代表多行/一行/原始格式/人类可读输出")
 
 	cmd.MarkFlagRequired("mode")
 
 	return cmd
 }
 
-func (opts *CLIOptions) readValueFromJSON() error {
+func (opts *CLIOptions) printVer() error {
+	fmt.Println("gobolt json version:", QqjsonVersion)
+	fmt.Println("gjson version:", GjsonVersion)
+	fmt.Println("sjson version:", SjsonVersion)
+	fmt.Println("pretty version:", PrettyVersion)
+	return nil
+}
+
+func (opts *CLIOptions) strToEscapeStr() error {
+	raw, err := opts.readInput()
+	if err != nil {
+		return err
+	}
+
+	// 末尾增加一个字符是为了防止$()语法中的末尾换行被bash自动去除
+	fmt.Printf("%sX", qJsonEscape(string(raw)))
+
+	return err
+}
+
+func (opts *CLIOptions) strToJsonStr() error {
+	raw, err := opts.readInput()
+	if err != nil {
+		return err
+	}
+
+	// 这里的末尾不用加X是因为，JSON字符串本身就不可能以回车结束
+	fmt.Printf("%s", strconv.Quote(string(raw)))
+
+	return err
+}
+
+func (opts *CLIOptions) readInput() ([]byte, error) {
 	var reader io.Reader
 
+	switch opts.Kind {
+	case "file":
+		f, err := os.Open(opts.InArg)
+		if err != nil {
+			return nil, fmt.Errorf("无法打开文件: %w", err)
+		}
+		defer f.Close()
+		reader = f
+	case "str":
+		reader = strings.NewReader(opts.InArg)
+	default:
+		reader = os.Stdin
+	}
+
+	raw, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("读取失败: %w", err)
+	}
+	return raw, nil
+}
+
+func (opts *CLIOptions) readValueFromJSON() error {
 	formatter, ok := formatters[opts.Format]
 	if !ok {
 		return fmt.Errorf("不支持的格式: %s", opts.Format)
@@ -396,33 +492,9 @@ func (opts *CLIOptions) readValueFromJSON() error {
 
 	var err error
 
-	// defer：只有在返回 error 时执行 Cleanup
-	defer func() {
-		if err != nil {
-			formatter.Cleanup(opts.VarName)
-		}
-	}()
-
-	switch opts.Kind {
-	case "file":
-		f, e := os.Open(opts.InArg)
-		if e != nil {
-			err = e
-			return fmt.Errorf("无法打开文件: %w", err)
-		}
-		defer f.Close()
-		reader = f
-	case "str":
-		reader = strings.NewReader(opts.InArg)
-	default:
-		// 没有任何参数的情况 或者 stdin 的情况
-		reader = os.Stdin
-	}
-
-	raw, e := io.ReadAll(reader)
-	if e != nil {
-		err = e
-		return fmt.Errorf("读取失败: %w", err)
+	raw, err := opts.readInput()
+	if err != nil {
+		return err
 	}
 
 	// 校验 JSON 格式
@@ -443,12 +515,13 @@ func (opts *CLIOptions) readValueFromJSON() error {
 		}
 	}
 
-	errFormatter := formatter.Format(result, opts.VarName, opts.JSONFormat)
-
-	if errFormatter.CmdExitCode == errorutil.CodeSuccess {
+	errFormat := formatter.Format(result, opts.JSONFormat)
+	if errFormat.Code == errorutil.CodeSuccess &&
+		errFormat.CmdExitCode == errorutil.CodeSuccess {
 		return nil
+	} else {
+		return errFormat
 	}
-	return errFormatter
 }
 
 // ./gobolt -w a1.Data9.xx\\.yy -d xx -f result2.jso
@@ -489,19 +562,7 @@ func (opts *CLIOptions) modifyJSON(
 		return err
 	}
 
-	var pretty any
-	if err := json.Unmarshal(updatedJSON, &pretty); err != nil {
-		return err
-	}
-
-	f, ok := JsonFormatters[opts.JSONFormat]
-	if !ok {
-		return fmt.Errorf("不支持的选项内容: %s", opts.JSONFormat)
-	}
-	formatted, err := f(pretty)
-	if err != nil {
-		return err
-	}
+	formatted := formatJSON(updatedJSON, opts.JSONFormat)
 
 	if opts.Kind == "file" {
 		return os.WriteFile(opts.InArg, formatted, 0644)
