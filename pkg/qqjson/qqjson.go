@@ -58,10 +58,6 @@ const (
 	JSONTypeArray   = 6
 	JSONTypeObject  = 7
 	JSONTypeUnknown = 8
-
-	JSONErrNotValidJsonStr = 9
-	JSONErrFormatFail      = 10
-	JSONPrettyFail         = 11
 )
 
 // 为了让 VarP 接收自定义类型，实现 flag.Value 接口(String Set Type)即可：
@@ -151,8 +147,8 @@ Examples:
         }
     }
 }
-gobolt json -l "/dev/null" -m r -t type -k file -i demo.json -p key1.key2.1
-gobolt json -l "/dev/null" -m r -t type -k str -i "$json_str" -p key1.key2.1
+gobolt json -m r -t type -k file -i demo.json -p key1.key2.1
+gobolt json -m r -t type -k str -i "$json_str" -p key1.key2.1
 
 命令的退出码说明:
 	JSONTypeNull    = 1
@@ -164,7 +160,9 @@ gobolt json -l "/dev/null" -m r -t type -k str -i "$json_str" -p key1.key2.1
 	JSONTypeObject  = 7
 	JSONTypeUnknown = 8
 
-上面的情况, $? 为 7, 因为退出码不是 0 , 所以使用 /dev/null 抑制日志输出。
+gobolt json -m t
+
+这也会打印出工具中的每种类型的JSON对象的枚举值。
 
 2. 读取内容
 
@@ -400,6 +398,8 @@ printf "%s" "$str" | ./gobolt json -m e -k stdin
 				return opts.strToEscapeStr()
 			case "v":
 				return opts.printVer()
+			case "t":
+				return opts.printTypeCode()
 			default:
 				return fmt.Errorf("未知模式: %q，请使用 r / w / d", opts.Mode)
 			}
@@ -408,7 +408,7 @@ printf "%s" "$str" | ./gobolt json -m e -k stdin
 
 	// flag 定义
 	// :TODO: 是否需要做参数互斥检查？
-	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "r / w / d / s / e / v 操作模式")
+	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "r / w / d / s / e / v / t 操作模式")
 	cmd.Flags().StringVarP(&opts.Path, "path", "p", "", "gjson / sjson 原始路径，保留原始格式，但是并不建议使用，原因见范例")
 	cmd.Flags().BoolVarP(&opts.UseArgPath, "argpath", "P", false, "从命令行中读取路径（需置于最后，空格分隔，强烈建议都用这种格式）")
 	cmd.Flags().StringVarP(&opts.Kind, "kind", "k", "", "json来源类别（默认 stdin / file / str）")
@@ -426,6 +426,19 @@ printf "%s" "$str" | ./gobolt json -m e -k stdin
 	cmd.MarkFlagRequired("mode")
 
 	return cmd
+}
+
+func (opts *CLIOptions) printTypeCode() error {
+	fmt.Println("JSON Type Codes:")
+	fmt.Println("JSONTypeNull    =", JSONTypeNull)
+	fmt.Println("JSONTypeTrue    =", JSONTypeTrue)
+	fmt.Println("JSONTypeFalse   =", JSONTypeFalse)
+	fmt.Println("JSONTypeNumber  =", JSONTypeNumber)
+	fmt.Println("JSONTypeString  =", JSONTypeString)
+	fmt.Println("JSONTypeArray   =", JSONTypeArray)
+	fmt.Println("JSONTypeObject  =", JSONTypeObject)
+	fmt.Println("JSONTypeUnknown =", JSONTypeUnknown)
+	return nil
 }
 
 func (opts *CLIOptions) printVer() error {
