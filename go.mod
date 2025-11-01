@@ -6,14 +6,12 @@ require (
 	fyne.io/fyne/v2 v2.6.3
 	github.com/awalterschulze/gographviz v2.0.3+incompatible
 	github.com/dustin/go-humanize v1.0.1
-	github.com/google/go-cmp v0.6.0
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826
 	github.com/pkg/sftp v1.13.9
 	github.com/povsister/scp v0.0.0-20250504051308-e467f71ea63c
 	github.com/spf13/cobra v1.9.1
 	github.com/srwiley/oksvg v0.0.0-20221011165216-be6e8873101c
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
-	github.com/tiaguinho/gosoap v1.4.4
 	github.com/tidwall/gjson v1.18.0
 	github.com/tidwall/pretty v1.2.0
 	github.com/tidwall/sjson v1.2.5
