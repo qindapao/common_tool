@@ -4,8 +4,6 @@
 GJSON_VER := $(shell grep 'github.com/tidwall/gjson' go.mod | awk '{print $$2}')
 SJSON_VER := $(shell grep 'github.com/tidwall/sjson' go.mod | awk '{print $$2}')
 PRETY_VER := $(shell grep 'github.com/tidwall/pretty' go.mod | awk '{print $$2}')
-COM_MES      := bin/com_mes
-COM_TSD      := bin/com_tsd
 GOBOLT       := bin/gobolt
 GOBOLT_ARM64 := bin/gobolt-linux-arm64
 GOBOLT_AMD64 := bin/gobolt-linux-amd64
@@ -33,15 +31,10 @@ tidy:
 	go mod tidy
 
 # 默认构建：com_mes, com_tsd, gobolt(Win), gobolt-Linux-ARM64
-all: $(COM_MES) $(COM_TSD) $(GOBOLT) $(GOBOLT_ARM64) $(GOBOLT_AMD64) $(ASCIIPLAY) $(ASCIIPLAY_GUI)
+all: $(GOBOLT) $(GOBOLT_ARM64) $(GOBOLT_AMD64) $(ASCIIPLAY) $(ASCIIPLAY_GUI)
 
 # 构建并测试
 test: test-com_mes test-com_tsd test-gobolt test-asciiplay
-
-# com_mes
-$(COM_MES): tidy
-	@echo "构建 com_mes..."
-	go build -ldflags="-s -w" -o $(COM_MES) ./cmd/com_mes
 
 icon_png:
 	@echo "生成 32x32 PNG 图标..."
@@ -61,11 +54,6 @@ $(ASCIIPLAY): tidy icon_png
 $(ASCIIPLAY_GUI): tidy icon_png icon_ico
 	@echo "构建 asciiplay gui ..."
 	go build -ldflags="-s -w -H windowsgui" -o $(ASCIIPLAY_GUI) ./cmd/asciiplay
-
-# com_tsd
-$(COM_TSD): tidy
-	@echo "构建 com_tsd..."
-	go build -ldflags="-s -w" -o $(COM_TSD) ./cmd/com_tsd
 
 # gobolt (本机 Windows 可执行)
 $(GOBOLT): tidy
@@ -112,18 +100,6 @@ test-asciiplay: $(ASCIIPLAY) $(ASCIIPLAY_GUI)
 	cp -f $(ASCIIPLAY_GUI) test/TestPlat/bin/
 
 # 构建并复制到测试目录（可根据实际需求开启/注释）
-test-com_mes: $(COM_MES)
-	@echo "测试 com_mes..."
-	rm -rf bin/com_mes
-	make $(COM_MES)
-	cp -f bin/com_mes test/TestPlat/bin/
-
-test-com_tsd: $(COM_TSD)
-	@echo "测试 com_tsd..."
-	rm -rf bin/com_tsd
-	make $(COM_TSD)
-	cp -f bin/com_tsd test/TestPlat/bin/
-
 test-gobolt: $(GOBOLT)
 	@echo "测试 gobolt..."
 	rm -rf bin/gobolt
