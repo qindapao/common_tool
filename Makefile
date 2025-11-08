@@ -1,114 +1,114 @@
-# Makefile for cygwin 环境
-# 支持本机 Windows 可执行和交叉编译 Linux/ARM64
-
 GJSON_VER := $(shell grep 'github.com/tidwall/gjson' go.mod | awk '{print $$2}')
 SJSON_VER := $(shell grep 'github.com/tidwall/sjson' go.mod | awk '{print $$2}')
 PRETY_VER := $(shell grep 'github.com/tidwall/pretty' go.mod | awk '{print $$2}')
 GOBOLT       := bin/gobolt
 GOBOLT_ARM64 := bin/gobolt-linux-arm64
 GOBOLT_AMD64 := bin/gobolt-linux-amd64
-ASCIIPLAY 	:= bin/AsciiMotionPlayer_console
+ASCIIPLAY 	:= bin/AsciiMotionPlayer
 ASCIIPLAY_GUI := bin/AsciiMotionPlayer.exe
 
-.PHONY: help tidy all test test-com_mes test-com_tsd test-gobolt build-arm64 build-amd64 clean
+.PHONY: help tidy all asciiplay gobolt clean
+
+# HIGHLIGHT_LAST = awk '{for(i=1;i<NF;i++) printf "%s ", $$i; printf "\033[1;36m%s\033[0m\n", $$NF}'
+# Highlight the last column (Filenames and relative directories) output by ls
+define HIGHLIGHT_LAST
+awk '{ \
+    for(i=1;i<NF;i++) printf "%s ", $$i; \
+    printf "\033[1;36m%s\033[0m\n", $$NF \
+}'
+endef
 
 help:
-	@echo "可用命令:"
-	@echo "  tidy             - 清理 Go 依赖"
-	@echo "  all              - 构建所有目标（含 ARM64 交叉编译）"
-	@echo "  test             - 构建并测试所有项目"
-	@echo "  test-com_mes     - 构建并测试 com_mes"
-	@echo "  test-com_tsd     - 构建并测试 com_tsd"
-	@echo "  test-asciiplay   - 构建并测试 asciiplay"
-	@echo "  test-gobolt      - 构建并测试 gobolt (本地 Windows 可执行)"
-	@echo "  build-arm64      - 只交叉编译 gobolt 为 Linux/ARM64"
-	@echo "  build-amd64      - 只交叉编译 gobolt 为 Linux/AMD64"
-	@echo "  clean            - 清理所有生成文件"
+	@echo "Available commands:"
+	@echo "  tidy             - Clean up Go dependencies"
+	@echo "  all              - Build all targets（Contains ARM64/AMD64 cross-compilation）"
+	@echo "  asciiplay        - Build asciiplay"
+	@echo "  gobolt           - Build gobolt"
+	@echo "  clean            - Clean all generated files"
 
-# 统一执行 `go mod tidy`
 tidy:
-	@echo "清理 Go 依赖..."
+	@echo "Clean up Go dependencies..."
 	go mod tidy
 
-# 默认构建：com_mes, com_tsd, gobolt(Win), gobolt-Linux-ARM64
-all: $(GOBOLT) $(GOBOLT_ARM64) $(GOBOLT_AMD64) $(ASCIIPLAY) $(ASCIIPLAY_GUI)
-
-# 构建并测试
-test: test-com_mes test-com_tsd test-gobolt test-asciiplay
+all: gobolt asciiplay
 
 icon_png:
-	@echo "生成 32x32 PNG 图标..."
+	@echo ""
+	@echo "----------generate 32x32 PNG icon..."
+	@echo ""
 	magick ./cmd/asciiplay/assets/icon.svg -background none -resize 32x32 ./cmd/asciiplay/assets/icon_32.png
 
 icon_ico:
-	@echo "生成多尺寸 ICO 图标..."
+	@echo ""
+	@echo "----------Generate multi-sized ICO icons..."
+	@echo ""
 	rm -f ./cmd/asciiplay/icon.ico
 	magick ./cmd/asciiplay/assets/icon.svg -background none -define icon:auto-resize=16,32,48,64,128,256 ./cmd/asciiplay/icon.ico
 	rsrc -ico ./cmd/asciiplay/icon.ico -o ./cmd/asciiplay/icon.syso
 
 # asciiplay
 $(ASCIIPLAY): tidy icon_png
-	@echo "构建 asciiplay..."
+	@echo ""
+	@echo "----------Build asciiplay..."
+	@echo ""
 	go build -ldflags="-s -w" -o $(ASCIIPLAY) ./cmd/asciiplay
 
 $(ASCIIPLAY_GUI): tidy icon_png icon_ico
-	@echo "构建 asciiplay gui ..."
+	@echo ""
+	@echo "----------Build asciiplay gui ..."
+	@echo ""
 	go build -ldflags="-s -w -H windowsgui" -o $(ASCIIPLAY_GUI) ./cmd/asciiplay
 
-# gobolt (本机 Windows 可执行)
+asciiplay: $(ASCIIPLAY) $(ASCIIPLAY_GUI)
+	@echo ""
+	@echo "----------asciiplay build completed:"
+	@echo ""
+	@ls -lh $(ASCIIPLAY) $(ASCIIPLAY_GUI) | $(HIGHLIGHT_LAST)
+
+# gobolt (Windows)
 $(GOBOLT): tidy
-	@echo "构建 gobolt (本机 Windows 可执行)..."
+	@echo ""
+	@echo "----------Build gobolt (Windows)..."
+	@echo ""
 	go build -ldflags="-s -w \
 		-X 'common_tool/pkg/qqjson.GjsonVersion=$(GJSON_VER)' \
 		-X 'common_tool/pkg/qqjson.PrettyVersion=$(PRETY_VER)' \
 		-X 'common_tool/pkg/qqjson.SjsonVersion=$(SJSON_VER)'" \
 		-o $(GOBOLT) ./cmd/gobolt
 
-# gobolt Linux/ARM64 交叉编译 (纯 Go，不启用 CGO)
+# gobolt Linux/ARM64 cross compile (Pure Go, no CGO enabled)
 $(GOBOLT_ARM64): tidy
-	@echo "交叉编译 gobolt 为 Linux/ARM64..."
+	@echo ""
+	@echo "----------cross compile gobolt to Linux/ARM64..."
+	@echo ""
 	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w \
 				-X 'common_tool/pkg/qqjson.GjsonVersion=$(GJSON_VER)' \
 				-X 'common_tool/pkg/qqjson.PrettyVersion=$(PRETY_VER)' \
 				-X 'common_tool/pkg/qqjson.SjsonVersion=$(SJSON_VER)'" \
 				-o $(GOBOLT_ARM64) ./cmd/gobolt
 
-# gobolt Linux/x86_64 交叉编译 (纯 Go，不启用 CGO)
+# gobolt Linux/x86_64(amd64) cross compile (Pure Go, no CGO enabled)
 $(GOBOLT_AMD64): tidy
-	@echo "交叉编译 gobolt 为 Linux/x86_64..."
+	@echo ""
+	@echo "----------cross compile gobolt to Linux/x86_64(amd64)..."
+	@echo ""
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w \
 			-X 'common_tool/pkg/qqjson.GjsonVersion=$(GJSON_VER)' \
 			-X 'common_tool/pkg/qqjson.PrettyVersion=$(PRETY_VER)' \
 			-X 'common_tool/pkg/qqjson.SjsonVersion=$(SJSON_VER)'" \
 			-o $(GOBOLT_AMD64) ./cmd/gobolt
 
+gobolt: $(GOBOLT) $(GOBOLT_AMD64) $(GOBOLT_ARM64)
+	@echo ""
+	@echo "----------gobolt build completed:"
+	@echo ""
+	@ls -lh $(GOBOLT) $(GOBOLT_AMD64) $(GOBOLT_ARM64) | $(HIGHLIGHT_LAST)
 
-# 专门做 ARM64 构建
-build-arm64: $(GOBOLT_ARM64)
-
-# 专门做 AMD64 构建
-build-amd64: $(GOBOLT_AMD64)
-
-# 构建并复制到测试目录（可根据实际需求开启/注释）
-test-asciiplay: $(ASCIIPLAY) $(ASCIIPLAY_GUI)
-	@echo "测试 asciiplay..."
-	rm -rf $(ASCIIPLAY)
-	rm -rf $(ASCIIPLAY_GUI)
-	make $(ASCIIPLAY)
-	cp -f $(ASCIIPLAY) test/TestPlat/bin/
-	make $(ASCIIPLAY_GUI)
-	cp -f $(ASCIIPLAY_GUI) test/TestPlat/bin/
-
-# 构建并复制到测试目录（可根据实际需求开启/注释）
-test-gobolt: $(GOBOLT)
-	@echo "测试 gobolt..."
-	rm -rf bin/gobolt
-	make $(GOBOLT)
-	cp -f bin/gobolt test/TestPlat/bin/
-
-# 清理所有生成文件
+# Clean all generated files
 clean:
-	@echo "清理生成文件..."
+	@echo ""
+	@echo "----------Clean generated files..."
+	@echo ""
 	rm -rf bin/*
 	rm -rf ./cmd/asciiplay/icon.*
 

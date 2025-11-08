@@ -1,3 +1,789 @@
+package stream_test
+
+import (
+	"fmt"
+	"math"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"common_tool/pkg/toolutil"
+)
+
+type Person struct {
+	Name string
+	Age  int
+}
+
+// 测试StreamOf构造器是否如期包装原始切片
+func TestStreamOf(t *testing.T) {
+	input := []int{1, 2, 3}
+	stream := toolutil.StreamOf(input)
+
+	// 测试 ToSlice 输出是否等于原始切片
+	got := stream.ToSlice()
+	if len(got) != len(input) {
+		t.Errorf("Stream.ToSlice length mismatch: got %d, want %d", len(got), len(input))
+	}
+	for i, v := range input {
+		if got[i] != v {
+			t.Errorf("Stream.ToSlice mismatch at index %d: got %v, want %v", i, got[i], v)
+		}
+	}
+}
+
+// 测试StreamOf构造器包含空切片的情况
+func TestEmptyStream(t *testing.T) {
+	var empty []string
+	stream := toolutil.StreamOf(empty)
+
+	if stream.Count() != 0 {
+		t.Errorf("Empty stream count should be 0, got %d", stream.Count())
+	}
+
+	if first, ok := stream.First(); ok {
+		t.Errorf("Expected no first element, got %v", first)
+	}
+
+	if last, ok := stream.Last(); ok {
+		t.Errorf("Expected no last element, got %v", last)
+	}
+}
+
+// 测试Count
+func TestStreamCount(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []int
+		expected int
+	}{
+		{"EmptyStream", []int{}, 0},
+		{"OneElement", []int{42}, 1},
+		{"MultipleElements", []int{1, 2, 3, 4, 5}, 5},
+	}
+
+	for _, tt := range tests {
+		// 构建子用例
+		t.Run(tt.name, func(t *testing.T) {
+			stream := toolutil.StreamOf(tt.input)
+			count := stream.Count()
+			if count != tt.expected {
+				t.Errorf("Count() = %d, want %d", count, tt.expected)
+			}
+		})
+	}
+}
+
+// 测试 First
+func TestStreamFirst(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        []int
+		wantValue    int
+		wantHasValue bool
+	}{
+		{"EmptyStream", []int{}, 0, false},
+		{"OneElement", []int{99}, 99, true},
+		{"MultipleElements", []int{5, 6, 7}, 5, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stream := toolutil.StreamOf(tt.input)
+			val, ok := stream.First()
+
+			if ok != tt.wantHasValue {
+				t.Errorf("First() hasValue = %v, want %v", ok, tt.wantHasValue)
+			}
+			if ok && val != tt.wantValue {
+				t.Errorf("First() = %v, want %v", val, tt.wantValue)
+			}
+		})
+	}
+}
+
+// 测试Last
+func TestStreamLast(t *testing.T) {
+	type custom struct {
+		Name string
+		Age  int
+	}
+
+	t.Run("Float64Slice", func(t *testing.T) {
+		data := []float64{3.14, 2.71, 1.41}
+		stream := toolutil.StreamOf(data)
+		v, ok := stream.Last()
+		if !ok || v != 1.41 {
+			t.Errorf("Last() = %v, want %v", v, 1.41)
+		}
+	})
+
+	t.Run("StringSlice", func(t *testing.T) {
+		data := []string{"go", "perl", "bash"}
+		stream := toolutil.StreamOf(data)
+		v, ok := stream.Last()
+		if !ok || v != "bash" {
+			t.Errorf("Last() = %v, want %v", v, "bash")
+		}
+	})
+
+	t.Run("CustomStructSlice", func(t *testing.T) {
+		data := []custom{
+			{Name: "Alice", Age: 20},
+			{Name: "Bob", Age: 30},
+		}
+		stream := toolutil.StreamOf(data)
+		v, ok := stream.Last()
+
+		expected := custom{Name: "Bob", Age: 30}
+		if !ok || !reflect.DeepEqual(v, expected) {
+			t.Errorf("Last() = %+v, want %+v", v, expected)
+		}
+	})
+
+	t.Run("EmptyStream", func(t *testing.T) {
+		var data []string
+		stream := toolutil.StreamOf(data)
+		v, ok := stream.Last()
+		if ok {
+			t.Errorf("Expected no value, got %v", v)
+		}
+	})
+}
+
+// 测试 ForEach
+func TestStreamForEach(t *testing.T) {
+	t.Run("CollectElements", func(t *testing.T) {
+		data := []string{"go", "perl", "bash"}
+		var collected []string
+
+		stream := toolutil.StreamOf(data)
+		stream.ForEach(func(s string) {
+			collected = append(collected, s)
+		})
+
+		if !reflect.DeepEqual(collected, data) {
+			t.Errorf("ForEach collected = %v, want %v", collected, data)
+		}
+	})
+
+	t.Run("CountInvocations", func(t *testing.T) {
+		data := []int{1, 2, 3, 4}
+		invoked := 0
+
+		stream := toolutil.StreamOf(data)
+		// 这里传值但是不使用，所以用 _
+		stream.ForEach(func(_ int) {
+			invoked++
+		})
+
+		if invoked != len(data) {
+			t.Errorf("ForEach invoked %d times, want %d", invoked, len(data))
+		}
+	})
+
+	t.Run("EmptyStream", func(t *testing.T) {
+		var data []float64
+		called := false
+
+		stream := toolutil.StreamOf(data)
+		stream.ForEach(func(_ float64) {
+			called = true
+		})
+
+		if called {
+			t.Errorf("ForEach should not be called on empty stream")
+		}
+	})
+}
+
+// 测试 Filter
+func TestFilter(t *testing.T) {
+	t.Run("FilterEvenNumbers", func(t *testing.T) {
+		data := []int{1, 2, 3, 4, 5, 6}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Filter(stream, func(n int) bool {
+			return n%2 == 0 // 筛偶数
+		}).ToSlice()
+
+		expected := []int{2, 4, 6}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Filter(even) = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("FilterShortStrings", func(t *testing.T) {
+		data := []string{"go", "perl", "python", "c"}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Filter(stream, func(s string) bool {
+			return len(s) <= 2 // 字符串长度不超过 2 的
+		}).ToSlice()
+
+		expected := []string{"go", "c"}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Filter(short strings) = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("FilterFloatsGreaterThanPi", func(t *testing.T) {
+		data := []float64{2.7, 3.14, 1.41, 3.5}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Filter(stream, func(f float64) bool {
+			return f > 3.14
+		}).ToSlice()
+
+		expected := []float64{3.5}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Filter(> π) = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("FilterStructByField", func(t *testing.T) {
+		type person struct {
+			Name string
+			Age  int
+		}
+		data := []person{
+			{"Alice", 18},
+			{"Bob", 25},
+			{"Eve", 15},
+		}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Filter(stream, func(p person) bool {
+			return p.Age >= 18
+		}).ToSlice()
+
+		expected := []person{
+			{"Alice", 18},
+			{"Bob", 25},
+		}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Filter(adults) = %v, want %v", result, expected)
+		}
+	})
+}
+
+// 测试 Map
+func TestMap(t *testing.T) {
+	t.Run("IntToString", func(t *testing.T) {
+		data := []int{1, 2, 3}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Map(stream, func(n int) string {
+			return fmt.Sprintf("no.%d", n)
+		}).ToSlice()
+
+		expected := []string{"no.1", "no.2", "no.3"}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Map(int→string) = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("StringToLength", func(t *testing.T) {
+		data := []string{"go", "perl", "python"}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Map(stream, func(s string) int {
+			return len(s)
+		}).ToSlice()
+
+		expected := []int{2, 4, 6}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Map(string→int) = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("StructToField", func(t *testing.T) {
+		type person struct {
+			Name string
+			Age  int
+		}
+		data := []person{
+			{"Alice", 18},
+			{"Bob", 25},
+		}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Map(stream, func(p person) string {
+			return p.Name
+		}).ToSlice()
+
+		expected := []string{"Alice", "Bob"}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Map(person→Name) = %v, want %v", result, expected)
+		}
+	})
+}
+
+// 测试 MapSafe
+func TestMapSafeWithDeepCopy(t *testing.T) {
+	t.Run("StructCloneWithTags", func(t *testing.T) {
+		type user struct {
+			Name string
+			// 这里是切片，是一个引用类型
+			Tags []string
+		}
+		data := []user{
+			{"Alice", []string{"x"}},
+			{"Bob", []string{"y"}},
+		}
+		stream := toolutil.StreamOf(data)
+
+		result := toolutil.MapSafe(stream, func(u user) user {
+			return u // 原样返回，由 MapSafe 来 deepcopy
+		}).ToSlice()
+
+		result[0].Tags[0] = "MODIFIED"
+
+		if data[0].Tags[0] == "MODIFIED" {
+			t.Errorf("MapSafe(deepcopy) failed: original was mutated")
+		}
+	})
+}
+
+// 测试 Reduce
+func TestReduce(t *testing.T) {
+	t.Run("SumOfInts", func(t *testing.T) {
+		data := []int{1, 2, 3, 4, 5}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Reduce(stream, 0, func(acc, v int) int {
+			return acc + v
+		})
+		if result != 15 {
+			t.Errorf("Reduce(sum) = %v, want 15", result)
+		}
+	})
+
+	t.Run("ConcatStrings", func(t *testing.T) {
+		data := []string{"go", "lang", "rocks"}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Reduce(stream, "", func(acc, v string) string {
+			return acc + v + "-"
+		})
+		expected := "go-lang-rocks-"
+		if result != expected {
+			t.Errorf("Reduce(concat) = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("MaxFloat", func(t *testing.T) {
+		data := []float64{1.1, 3.5, 2.8, 9.0, 4.2}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Reduce(stream, -math.MaxFloat64, func(acc, v float64) float64 {
+			if v > acc {
+				return v
+			}
+			return acc
+		})
+		if result != 9.0 {
+			t.Errorf("Reduce(max) = %v, want 9.0", result)
+		}
+	})
+
+	t.Run("SumStructFields", func(t *testing.T) {
+		type item struct {
+			Name  string
+			Count int
+		}
+		data := []item{
+			{"apple", 3},
+			{"banana", 4},
+			{"cherry", 2},
+		}
+		stream := toolutil.StreamOf(data)
+		total := toolutil.Reduce(stream, 0, func(acc int, i item) int {
+			return acc + i.Count
+		})
+		if total != 9 {
+			t.Errorf("Reduce(item.Count sum) = %v, want 9", total)
+		}
+	})
+
+	t.Run("ReduceOnEmptyStream", func(t *testing.T) {
+		var data []int
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Reduce(stream, 100, func(acc, v int) int {
+			return acc + v
+		})
+		if result != 100 {
+			t.Errorf("Reduce(empty stream) = %v, want 100", result)
+		}
+	})
+}
+
+// 测试 Distinct
+func TestDistinct(t *testing.T) {
+	t.Run("IntsWithExactMatch", func(t *testing.T) {
+		data := []int{1, 2, 2, 3, 3, 3, 4}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Distinct(stream, func(a, b int) bool { return a == b }).ToSlice()
+
+		expected := []int{1, 2, 3, 4}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Distinct(ints) = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("StringsIgnoreCase", func(t *testing.T) {
+		data := []string{"Go", "go", "Golang", "GOLANG", "Perl"}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Distinct(stream, func(a, b string) bool {
+			return strings.EqualFold(a, b) // 忽略大小写
+		}).ToSlice()
+
+		expected := []string{"Go", "Golang", "Perl"}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Distinct(strings, ignore case) = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("StructByField", func(t *testing.T) {
+		type lang struct {
+			Name string
+			Tag  string
+		}
+		data := []lang{
+			{"Golang", "go"},
+			{"Go", "go"},
+			{"Perl", "perl"},
+			{"Perl5", "perl"},
+			{"Python", "py"},
+		}
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Distinct(stream, func(a, b lang) bool {
+			return a.Tag == b.Tag // 按 Tag 字段判断重复
+		}).ToSlice()
+
+		expected := []lang{
+			{"Golang", "go"},
+			{"Perl", "perl"},
+			{"Python", "py"},
+		}
+		if !reflect.DeepEqual(result, expected) {
+			t.Errorf("Distinct(struct by field) = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("EmptyStream", func(t *testing.T) {
+		var data []int
+		stream := toolutil.StreamOf(data)
+		result := toolutil.Distinct(stream, func(a, b int) bool { return a == b }).ToSlice()
+
+		if len(result) != 0 {
+			t.Errorf("Distinct(empty) = %v, want empty slice", result)
+		}
+	})
+}
+
+// 测试 DistinctSafe
+func TestDistinctSafe(t *testing.T) {
+	t.Run("StructWithSliceField", func(t *testing.T) {
+		type user struct {
+			Name string
+			Tags []string
+		}
+
+		data := []user{
+			{"Alice", []string{"x"}},
+			{"Bob", []string{"y"}},
+			{"ALICE", []string{"x"}},
+		}
+
+		stream := toolutil.StreamOf(data)
+		distinct := toolutil.DistinctSafe(stream, func(a, b user) bool {
+			return strings.EqualFold(a.Name, b.Name) // 忽略大小写
+		}).ToSlice()
+
+		// 验证去重结果
+		if len(distinct) != 2 {
+			t.Errorf("DistinctSafe result length = %d, want 2", len(distinct))
+		}
+
+		// 修改结果数据，确保不会影响原始数据
+		distinct[0].Tags[0] = "MODIFIED"
+
+		if data[0].Tags[0] == "MODIFIED" || data[2].Tags[0] == "MODIFIED" {
+			t.Errorf("DistinctSafe failed: original data was mutated")
+		}
+	})
+}
+
+// 测试 GroupBy
+func TestGroupBy(t *testing.T) {
+	t.Run("GroupIntsByRemainder", func(t *testing.T) {
+		data := []int{1, 2, 3, 4, 5, 6, 7}
+		stream := toolutil.StreamOf(data)
+		grouped := toolutil.GroupBy(stream, func(n int) int {
+			return n % 3 // 取余数作为分组 key
+		})
+
+		if len(grouped) != 3 {
+			t.Errorf("Expected 3 groups, got %d", len(grouped))
+		}
+		if !reflect.DeepEqual(grouped[0], []int{3, 6}) {
+			t.Errorf("Group[0] = %v, want [3 6]", grouped[0])
+		}
+		if !reflect.DeepEqual(grouped[1], []int{1, 4, 7}) {
+			t.Errorf("Group[1] = %v, want [1 4 7]", grouped[1])
+		}
+		if !reflect.DeepEqual(grouped[2], []int{2, 5}) {
+			t.Errorf("Group[2] = %v, want [2 5]", grouped[2])
+		}
+	})
+
+	t.Run("GroupStringsByLength", func(t *testing.T) {
+		data := []string{"go", "perl", "c", "bash", "node", "r"}
+		stream := toolutil.StreamOf(data)
+		grouped := toolutil.GroupBy(stream, func(s string) int {
+			return len(s)
+		})
+
+		expected := map[int][]string{
+			1: {"c", "r"},
+			2: {"go"},
+			4: {"perl", "bash", "node"},
+		}
+
+		if !reflect.DeepEqual(grouped, expected) {
+			t.Errorf("GroupBy = %v, want %v", grouped, expected)
+		}
+	})
+
+	t.Run("GroupStructByField", func(t *testing.T) {
+		type logLine struct {
+			Level string
+			Msg   string
+		}
+		data := []logLine{
+			{"INFO", "start"},
+			{"ERROR", "fail A"},
+			{"INFO", "running"},
+			{"ERROR", "fail B"},
+			{"DEBUG", "trace"},
+		}
+
+		expected := map[string][]logLine{
+			"INFO": {
+				{"INFO", "start"},
+				{"INFO", "running"},
+			},
+			"ERROR": {
+				{"ERROR", "fail A"},
+				{"ERROR", "fail B"},
+			},
+			"DEBUG": {
+				{"DEBUG", "trace"},
+			},
+		}
+
+		stream := toolutil.StreamOf(data)
+		grouped := toolutil.GroupBy(stream, func(l logLine) string {
+			return l.Level
+		})
+
+		if !reflect.DeepEqual(grouped, expected) {
+			t.Errorf("GroupBy = %v, want %v", grouped, expected)
+		}
+	})
+
+	t.Run("EmptyStream", func(t *testing.T) {
+		var data []string
+		grouped := toolutil.GroupBy(toolutil.StreamOf(data), func(s string) string {
+			return s
+		})
+		if len(grouped) != 0 {
+			t.Errorf("Expected empty group map, got %v", grouped)
+		}
+	})
+}
+
+func TestGroupBySafe(t *testing.T) {
+	t.Run("GroupByFieldWithDeepCopy", func(t *testing.T) {
+		type user struct {
+			Name string
+			Tags []string
+		}
+		data := []user{
+			{"Alice", []string{"x"}},
+			{"Bob", []string{"x"}},
+			{"Carol", []string{"y"}},
+		}
+
+		stream := toolutil.StreamOf(data)
+		grouped := toolutil.GroupBySafe(stream, func(u user) string {
+			return u.Tags[0]
+		})
+
+		if len(grouped["x"]) != 2 || len(grouped["y"]) != 1 {
+			t.Errorf("GroupBySafe group counts incorrect: %v", grouped)
+		}
+
+		// 改变 grouped 中的元素
+		grouped["x"][0].Tags[0] = "MODIFIED"
+
+		// 验证原始数据未被污染
+		if data[0].Tags[0] == "MODIFIED" || data[1].Tags[0] == "MODIFIED" {
+			t.Errorf("GroupBySafe failed: original data was mutated")
+		}
+	})
+}
+
+// 测试Peek
+func TestPeek(t *testing.T) {
+	t.Run("PeekShouldInvokeSideEffectAndPreserveStream", func(t *testing.T) {
+		data := []int{1, 2, 3}
+		var seen []int
+
+		stream := toolutil.StreamOf(data)
+		stream = toolutil.Peek(stream, func(n int) {
+			seen = append(seen, n)
+		})
+
+		result := stream.ToSlice()
+
+		if !reflect.DeepEqual(seen, data) {
+			t.Errorf("Peek side effect failed: got %v, want %v", seen, data)
+		}
+		if !reflect.DeepEqual(result, data) {
+			t.Errorf("Peek mutated stream: got %v, want %v", result, data)
+		}
+	})
+
+	t.Run("PeekShouldLogStructElements", func(t *testing.T) {
+		type user struct {
+			Name string
+		}
+		data := []user{
+			{"Alice"},
+			{"Bob"},
+		}
+		var log []string
+
+		stream := toolutil.StreamOf(data)
+		stream = toolutil.Peek(stream, func(u user) {
+			log = append(log, fmt.Sprintf("\U0001f440 %s", u.Name))
+		})
+
+		result := stream.ToSlice()
+
+		wantLog := []string{"\U0001f440 Alice", "\U0001f440 Bob"}
+		if !reflect.DeepEqual(log, wantLog) {
+			t.Errorf("Peek logging incorrect: got %v, want %v", log, wantLog)
+		}
+		if !reflect.DeepEqual(result, data) {
+			t.Errorf("Peek mutated stream: got %v, want %v", result, data)
+		}
+	})
+}
+
+// 测试 Sorted
+func TestSorted(t *testing.T) {
+	t.Run("IntsAsc", func(t *testing.T) {
+		data := []int{5, 2, 4, 3, 1}
+		sorted := toolutil.Sorted(toolutil.StreamOf(data), func(a, b int) bool {
+			return a < b
+		}).ToSlice()
+
+		expected := []int{1, 2, 3, 4, 5}
+		if !reflect.DeepEqual(sorted, expected) {
+			t.Errorf("Sorted(int asc) = %v, want %v", sorted, expected)
+		}
+	})
+
+	t.Run("StringsDesc", func(t *testing.T) {
+		data := []string{"go", "perl", "bash"}
+		sorted := toolutil.Sorted(toolutil.StreamOf(data), func(a, b string) bool {
+			return a > b // 降序
+		}).ToSlice()
+
+		expected := []string{"perl", "go", "bash"}
+		if !reflect.DeepEqual(sorted, expected) {
+			t.Errorf("Sorted(strings desc) = %v, want %v", sorted, expected)
+		}
+	})
+
+	t.Run("StructByField", func(t *testing.T) {
+		type file struct {
+			Name string
+			Size int
+		}
+		data := []file{
+			{"a.txt", 300},
+			{"b.txt", 100},
+			{"c.txt", 200},
+		}
+		sorted := toolutil.Sorted(toolutil.StreamOf(data), func(a, b file) bool {
+			return a.Size < b.Size
+		}).ToSlice()
+
+		expected := []file{
+			{"b.txt", 100},
+			{"c.txt", 200},
+			{"a.txt", 300},
+		}
+		if !reflect.DeepEqual(sorted, expected) {
+			t.Errorf("Sorted(files by size) = %v, want %v", sorted, expected)
+		}
+	})
+
+	t.Run("EmptyStream", func(t *testing.T) {
+		var data []float64
+		sorted := toolutil.Sorted(toolutil.StreamOf(data), func(a, b float64) bool {
+			return a < b
+		}).ToSlice()
+
+		if len(sorted) != 0 {
+			t.Errorf("Sorted(empty) = %v, want empty slice", sorted)
+		}
+	})
+}
+
+// 测试 SortedSafe
+func TestSortedSafe(t *testing.T) {
+	t.Run("SortStructByFieldWithDeepCopy", func(t *testing.T) {
+		type user struct {
+			Name string
+			Tags []string
+		}
+		data := []user{
+			{"Charlie", []string{"z"}},
+			{"Alice", []string{"x"}},
+			{"Bob", []string{"y"}},
+		}
+		stream := toolutil.StreamOf(data)
+
+		sorted := toolutil.SortedSafe(stream, func(a, b user) bool {
+			return a.Name < b.Name
+		}).ToSlice()
+
+		expected := []user{
+			{"Alice", []string{"x"}},
+			{"Bob", []string{"y"}},
+			{"Charlie", []string{"z"}},
+		}
+		if !reflect.DeepEqual(sorted, expected) {
+			t.Errorf("SortedSafe result = %v, want %v", sorted, expected)
+		}
+
+		// 验证深拷贝是否生效
+		sorted[0].Tags[0] = "MODIFIED"
+		if data[1].Tags[0] == "MODIFIED" {
+			t.Errorf("SortedSafe did not deep copy elements properly")
+		}
+	})
+
+	t.Run("EmptyStream", func(t *testing.T) {
+		var data []int
+		stream := toolutil.StreamOf(data)
+		sorted := toolutil.SortedSafe(stream, func(a, b int) bool {
+			return a < b
+		}).ToSlice()
+
+		if len(sorted) != 0 {
+			t.Errorf("SortedSafe(empty) = %v, want empty slice", sorted)
+		}
+	})
+}
+
 func TestTake(t *testing.T) {
 	t.Run("TakeLessThanLength", func(t *testing.T) {
 		data := []int{1, 2, 3, 4, 5}
@@ -863,3 +1649,4 @@ func TestFloatStreamBuilder_FilterSafe(t *testing.T) {
 
 	assert.Equal(t, []float64{2.2, 3.3}, out)
 }
+

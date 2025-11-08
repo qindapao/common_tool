@@ -1,7 +1,7 @@
 // Package textutil 提供一个链式文本处理构建器 Builder，
 // 支持文本切分、正则提取、过滤映射、字段定位、结构断言和链路调试追踪。
 //
-// \U0001f517 Builder：处理文本，如同操作列表（Segment-Oriented）
+// Builder：处理文本，如同操作列表（Segment-Oriented）
 //
 // —— 想象一下你不是在处理 string，而是在操作字符串“片段切片”
 // —— 每次调用都是一段数据流的重构、过滤与压缩
@@ -42,8 +42,8 @@
 //     }).
 //     Result() // []string{"ERR_404", "ERR_503"}
 //
-// \U0001f4cc 默认开启 trace 追踪机制，可通过 textutil.DisableGlobalTrace() 全局关闭追踪。
-// \U0001f50d 模块内部结构导览（供维护者使用）：
+// 默认开启 trace 追踪机制，可通过 textutil.DisableGlobalTrace() 全局关闭追踪。
+// 模块内部结构导览（供维护者使用）：
 //
 //  • 操作链式 API：SplitSep, SplitLen, Regex, RegexGroup, Index, Map, Filter...
 //  • 断言 API：AssertCount, MustFirst
@@ -636,7 +636,7 @@ func (lb *LazyBuilder) Regex(pattern string) *LazyBuilder {
 
 // Each 消费流中每个元素，逐条执行给定函数，常用于流式打印或边处理边写入。
 // 只产生副作用，不改变原始数据
-// \U0001f4cc 注意：Each 是终端操作，会驱动整个链条执行。
+// 注意：Each 是终端操作，会驱动整个链条执行。
 // 与 Collect 不同，它不保留任何中间结果，而是边拿边处理，适合处理大规模数据流。
 func (lb *LazyBuilder) Each(fn func(string)) {
 	for {
@@ -974,11 +974,11 @@ func (lb *LazyBuilder) ForkN(n int) []*LazyBuilder {
 
 // 上面两个Fork函数
 // 功能点	说明
-// \U0001f4e6 流广播	所有分支都能完整接收到数据
-// \U0001f9ca 支持懒消费	每个分支可以独立处理，延迟执行
-// \U0001f6ab 一次性消费	每个分支 .Collect() 后不可再用
-// ⚖️ 内存控制	缓冲区大小需根据并发消费情况调整
-// ⚠️ 慎用于死链	如果有分支不消费，将导致阻塞或 goroutine 卡死（可加超时或保护机制）
+// 流广播	所有分支都能完整接收到数据
+// 支持懒消费	每个分支可以独立处理，延迟执行
+// 一次性消费	每个分支 .Collect() 后不可再用
+// 内存控制	缓冲区大小需根据并发消费情况调整
+// 慎用于死链	如果有分支不消费，将导致阻塞或 goroutine 卡死（可加超时或保护机制）
 //
 //
 //

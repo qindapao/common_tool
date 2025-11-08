@@ -135,13 +135,13 @@ func TestFindSimpleCycles_Complex(t *testing.T) {
 	cycles := graph.FindSimpleCycles(g)
 	t.Logf("共检测到 %d 个环:", len(cycles))
 	for _, c := range cycles {
-		t.Logf("\U0001f300 %s", graph.FormatCycle(c))
+		t.Logf("O %s", graph.FormatCycle(c))
 	}
 
 	deduped := graph.DeduplicateCycles(cycles)
-	t.Logf("\U0001f3af 去重后仅保留 %d 个语义唯一环:", len(deduped))
+	t.Logf("Q 去重后仅保留 %d 个语义唯一环:", len(deduped))
 	for _, c := range deduped {
-		t.Logf("\U0001f300 %s", graph.FormatCycle(c))
+		t.Logf("O %s", graph.FormatCycle(c))
 	}
 
 	// 期望环数：6（A-B-C-A, X-Y-Z-X, M-N-O-M, M-P-Q-N-M, S→S, T→T）

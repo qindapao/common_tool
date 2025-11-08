@@ -13,6 +13,7 @@ import (
 	"image/png"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -43,9 +45,11 @@ import (
 //
 //go:embed assets/icon_32.png
 var iconPNG []byte
+var soilGray = color.NRGBA{R: 120, G: 120, B: 120, A: 255}
 
 const (
 	appTitle            = "Ascii Motion Player"
+	appVersion          = "v1.0.1"
 	defaultFrameRateMs  = 500
 	defaultFontSize     = 12
 	maxRecentDirs       = 15
@@ -99,6 +103,9 @@ func (t *customTheme) Size(n fyne.ThemeSizeName) float32 {
 
 type FramePlayer struct {
 	frameFiles      []string
+	frameTexts      map[int]string
+	frameImages     map[int]image.Image
+	frameDir        string
 	frameCount      int
 	currentFrame    int
 	lastShownFrame  int
@@ -106,7 +113,8 @@ type FramePlayer struct {
 	frameRate       time.Duration
 	cacheWindowSize int
 
-	displayArea       *fyne.Container
+	displayArea fyne.CanvasObject
+
 	frameValueLabel   *widget.Label
 	speedValueLabel   *widget.Label
 	playPauseBtn      *widget.Button
@@ -135,6 +143,64 @@ type FramePlayer struct {
 
 	// 缓存：索引 -> 渲染好的 CanvasObject
 	frameCache map[int]fyne.CanvasObject
+
+	frameMapScroll  *container.Scroll
+	frameMapBox     *fyne.Container
+	frameMapButtons []*widget.Button
+
+	hideAllControls  bool
+	frameMapOnlyMode bool
+
+	frameMapDirty bool
+
+	// 播放循环等待原子锁(0: 不在播放循环 1: 在播放循环)
+	inPlayingLock int32
+
+	ghostMode bool
+
+	refreshMode  bool
+	lastModTimes map[string]time.Time
+
+	refreshTicker *time.Ticker
+	refreshQuit   chan struct{}
+}
+
+type FrameDisplay struct {
+	widget.BaseWidget
+	p       *FramePlayer
+	content fyne.CanvasObject
+	box     *fyne.Container
+}
+
+func NewFrameDisplay(p *FramePlayer) *FrameDisplay {
+	d := &FrameDisplay{p: p}
+	d.ExtendBaseWidget(d)
+	return d
+}
+
+func (d *FrameDisplay) CreateRenderer() fyne.WidgetRenderer {
+	d.box = container.NewStack()
+	if d.content != nil {
+		d.box.Add(d.content)
+	}
+	return widget.NewSimpleRenderer(d.box)
+}
+
+func (d *FrameDisplay) SetContent(obj fyne.CanvasObject) {
+	d.content = obj
+	if d.box != nil {
+		d.box.Objects = []fyne.CanvasObject{obj}
+		d.box.Refresh()
+	}
+	d.Refresh()
+}
+
+func (d *FrameDisplay) Scrolled(ev *fyne.ScrollEvent) {
+	if ev.Scrolled.DY < 0 {
+		d.p.nextFrame()
+	} else if ev.Scrolled.DY > 0 {
+		d.p.prevFrame()
+	}
 }
 
 func NewFramePlayer(a fyne.App, w fyne.Window, configPath string) *FramePlayer {
@@ -155,6 +221,8 @@ func NewFramePlayer(a fyne.App, w fyne.Window, configPath string) *FramePlayer {
 		recentDirs:      []string{},
 		configPath:      configPath,
 		frameCache:      make(map[int]fyne.CanvasObject),
+		frameTexts:      make(map[int]string),
+		frameImages:     make(map[int]image.Image),
 		cacheWindowSize: cacheSizeDefault,
 		controlsVisible: true, // 默认显示控制条
 	}
@@ -175,6 +243,19 @@ func NewFramePlayer(a fyne.App, w fyne.Window, configPath string) *FramePlayer {
 
 	return p
 }
+
+func (p *FramePlayer) setWindowTitleWithDir(dir string) {
+	title := appTitle + " " + appVersion + " - " + filepath.Base(dir)
+	if p.ghostMode {
+		title += " [GhostMode]"
+	}
+
+	if p.refreshMode {
+		title += " [RefreshMode]"
+	}
+	p.window.SetTitle(title)
+}
+
 func (p *FramePlayer) addRecentDir(path string) {
 	// 去重并移到最前
 	for i, dir := range p.recentDirs {
@@ -195,22 +276,38 @@ func (p *FramePlayer) addRecentDir(path string) {
 	p.saveConfig()
 }
 
-func (p *FramePlayer) playFramesReverse() {
-	p.reversePlaying = true
-	p.updateReversePlayIcon()
+func (p *FramePlayer) playFrames(direction int) {
+	// direction = +1 表示正向播放，-1 表示反向播放
+	if direction > 0 {
+		p.playing = true
+		p.reversePlaying = false
+		p.updatePlayPauseIcon()
+	} else {
+		p.reversePlaying = true
+		p.playing = false
+		p.updateReversePlayIcon()
+	}
 
 	go func() {
-		for p.reversePlaying {
+		atomic.StoreInt32(&p.inPlayingLock, 1)       // 协程开始时置 1
+		defer atomic.StoreInt32(&p.inPlayingLock, 0) // 协程退出时置 0
+
+		ticker := time.NewTicker(p.frameRate)
+		defer ticker.Stop()
+
+		for (direction > 0 && p.playing) || (direction < 0 && p.reversePlaying) {
+			<-ticker.C
 			if p.frameCount == 0 {
-				time.Sleep(100 * time.Millisecond)
 				continue
 			}
-			index := (p.lastShownFrame - 1 + p.frameCount) % p.frameCount
+
+			if (direction > 0 && !p.playing) || (direction < 0 && !p.reversePlaying) {
+				break
+			}
+
+			index := (p.currentFrame + direction + p.frameCount) % p.frameCount
 			p.showFrame(index)
 			p.currentFrame = index
-
-			// 每次都读取最新的播放速率
-			time.Sleep(p.frameRate)
 		}
 	}()
 }
@@ -223,6 +320,7 @@ func (p *FramePlayer) toggleReversePlayPause() {
 	if p.reversePlaying {
 		p.reversePlaying = false
 		p.updateReversePlayIcon()
+		p.waitForPlaybackExit()
 		return
 	}
 
@@ -230,9 +328,16 @@ func (p *FramePlayer) toggleReversePlayPause() {
 	if p.playing {
 		p.playing = false
 		p.updatePlayPauseIcon()
+		p.waitForPlaybackExit()
 	}
 
-	go p.playFramesReverse()
+	go p.playFrames(-1)
+}
+
+func (p *FramePlayer) waitForPlaybackExit() {
+	for atomic.LoadInt32(&p.inPlayingLock) == 1 {
+		time.Sleep(1 * time.Millisecond)
+	}
 }
 
 func (p *FramePlayer) updateReversePlayIcon() {
@@ -281,7 +386,7 @@ func (p *FramePlayer) refreshRecentDirsUI() {
 			if err := p.loadFrames(d); err != nil {
 				return
 			}
-			p.window.SetTitle(appTitle + " - " + filepath.Base(d))
+			p.setWindowTitleWithDir(d)
 			p.addRecentDir(d)
 			p.currentFrame = 0
 			if p.frameCount > 0 {
@@ -300,7 +405,16 @@ func (p *FramePlayer) refreshRecentDirsUI() {
 	p.recentBar.Refresh()
 }
 
+type FrameInfo struct {
+	Number     int    // 提取的帧号
+	IsKey      bool   // 是否关键帧
+	Annotation string // 关键帧注释（若存在）
+	RawName    string // 原始文件名（可选）
+}
+
 func (p *FramePlayer) loadFrames(dir string) error {
+	log.Printf("load dir:%s", dir)
+	p.frameMapDirty = true
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
@@ -315,53 +429,80 @@ func (p *FramePlayer) loadFrames(dir string) error {
 		}
 	}
 
-	// 数字序排序：从文件名末尾提取连续数字并排序；无数字排最后
-	sort.Slice(frames, func(i, j int) bool {
-		ni := extractNumber(frames[i])
-		nj := extractNumber(frames[j])
-		if ni != nj {
-			return ni < nj
-		}
-		// 次级：不区分大小写的文件名，保证稳定性
-		bi := strings.ToLower(filepath.Base(frames[i]))
-		bj := strings.ToLower(filepath.Base(frames[j]))
-		return bi < bj
-	})
+	sortFrames(frames)
 
 	p.frameFiles = frames
 	p.frameCount = len(frames)
 
+	p.lastModTimes = make(map[string]time.Time, len(frames))
+	for _, f := range frames {
+		if st, err := os.Stat(f); err == nil {
+			p.lastModTimes[f] = st.ModTime()
+		}
+	}
+
 	// 切换目录时清空缓存
-	p.frameCache = make(map[int]fyne.CanvasObject)
+	p.clearCache()
+	p.frameDir = dir
 
 	return nil
 }
 
+func (p *FramePlayer) clearCache() {
+	p.frameCache = make(map[int]fyne.CanvasObject)
+	p.frameTexts = make(map[int]string)
+	p.frameImages = make(map[int]image.Image)
+}
+
 // 从文件名末尾提取数字（遇到非数字停止），无数字则返回最大值
-func extractNumber(path string) int {
+func extractFrameInfo(path string) FrameInfo {
 	base := filepath.Base(path)
 	name := strings.TrimSuffix(base, filepath.Ext(base))
 
+	// 提取末尾数字
 	numStr := ""
-	for i := len(name) - 1; i >= 0; i-- {
-		if name[i] >= '0' && name[i] <= '9' {
-			numStr = string(name[i]) + numStr
+	i := len(name) - 1
+	for ; i >= 0; i-- {
+		ch := name[i]
+		if ch >= '0' && ch <= '9' {
+			numStr = string(ch) + numStr
 		} else {
-			if numStr != "" {
-				break // 已经开始提取数字，遇到非数字就结束
+			break
+		}
+	}
+
+	num := 1 << 30
+	if numStr != "" {
+		if parsed, err := strconv.Atoi(numStr); err == nil {
+			num = parsed
+		}
+	}
+
+	isKey := false
+	annotation := ""
+
+	// 判断关键帧
+	if i >= 0 && (name[i] == 'K' || name[i] == 'k') {
+		isKey = true
+
+		// 如果 K 前面是 "__"，则提取注释
+		if i >= 2 && name[i-2:i] == "__" {
+			last := strings.LastIndex(name, "__")
+			if last > 0 {
+				before := strings.LastIndex(name[:last], "__")
+				if before >= 0 {
+					annotation = strings.TrimSpace(name[before+2 : last])
+				}
 			}
 		}
 	}
 
-	if numStr == "" {
-		return 1 << 30 // 没有数字，排在最后
+	return FrameInfo{
+		Number:     num,
+		IsKey:      isKey,
+		Annotation: annotation,
+		RawName:    base,
 	}
-
-	var num int
-	if _, err := fmt.Sscanf(numStr, "%d", &num); err != nil {
-		return 1 << 30 // 解析失败，排在最后
-	}
-	return num
 }
 func (p *FramePlayer) updateFrameInfoLabel(index int) {
 	fyne.Do(func() {
@@ -369,41 +510,51 @@ func (p *FramePlayer) updateFrameInfoLabel(index int) {
 	})
 }
 
-// :TODO: 文本超出范围的区域无法出现滚动条，但其实也不需要滚动条。
-func (p *FramePlayer) makeTextView(content string) fyne.CanvasObject {
+func (p *FramePlayer) makeTextViewWithStyle(content string, col color.Color, alpha uint8) fyne.CanvasObject {
 	lines := strings.Split(content, "\n")
 	var items []fyne.CanvasObject
 	y := float32(0)
+
+	fontSize := float32(p.fontSize)
+	lineHeight := float32(int(fontSize*1.4 + 0.5))
+
 	for _, line := range lines {
-		t := canvas.NewText(line, theme.Color(theme.ColorNameForeground))
+		c := col
+		// 如果传了 alpha，就用 NRGBA 包装一下
+		if nrgba, ok := c.(color.NRGBA); ok {
+			nrgba.A = alpha
+			c = nrgba
+		}
+		t := canvas.NewText(line, c)
 		t.TextStyle = fyne.TextStyle{Monospace: true}
-		t.TextSize = float32(p.fontSize)
+		t.TextSize = fontSize
 		t.Move(fyne.NewPos(0, y))
 		items = append(items, t)
-		y += t.TextSize // 累加高度以紧密排列
+		y += lineHeight
 	}
+
 	return container.NewWithoutLayout(items...)
 }
 
-func renderSVGToObject(path string, want fyne.Size) fyne.CanvasObject {
+func renderSVGToObject(path string, want fyne.Size) (fyne.CanvasObject, image.Image) {
 	_, err := os.Stat(path)
 	if err != nil {
-		return widget.NewLabel("SVG 文件不存在或无法访问：" + err.Error())
+		return widget.NewLabel("SVG 文件不存在或无法访问：" + err.Error()), nil
 	}
 
 	svgBytes, err := os.ReadFile(path)
 	if err != nil {
-		return widget.NewLabel("SVG读取失败：" + err.Error())
+		return widget.NewLabel("SVG读取失败：" + err.Error()), nil
 	}
 
 	header := string(svgBytes)
 	if !strings.Contains(header, "<svg") && !strings.Contains(header, "<?xml") {
-		return widget.NewLabel("读取到的文件看起来不是 SVG")
+		return widget.NewLabel("读取到的文件看起来不是 SVG"), nil
 	}
 
 	icon, err := oksvg.ReadIconStream(bytes.NewReader(svgBytes))
 	if err != nil {
-		return widget.NewLabel("解析SVG失败：" + err.Error())
+		return widget.NewLabel("解析SVG失败：" + err.Error()), nil
 	}
 
 	// 决定渲染尺寸：优先 want，否则尝试 viewBox，再兜底 200x200
@@ -457,7 +608,74 @@ func renderSVGToObject(path string, want fyne.Size) fyne.CanvasObject {
 		img.SetMinSize(fyne.NewSize(float32(tw), float32(th)))
 	}
 
-	return container.NewCenter(img)
+	img.Move(fyne.NewPos(0, 0)) // 显示在左上角
+	img.Resize(img.MinSize())   // 确保尺寸被设置
+	return container.NewWithoutLayout(img), rgba
+}
+
+func (p *FramePlayer) makeImageView(img image.Image, translucency float64) fyne.CanvasObject {
+	if img == nil {
+		return widget.NewLabel("图像为空")
+	}
+	pic := canvas.NewImageFromImage(img)
+	pic.FillMode = canvas.ImageFillOriginal
+	size := fyne.NewSize(float32(img.Bounds().Dx()), float32(img.Bounds().Dy()))
+	pic.Resize(size)
+	pic.Move(fyne.NewPos(0, 0))
+	pic.Translucency = translucency
+	return container.NewWithoutLayout(pic)
+}
+
+func (p *FramePlayer) checkDirChanged() bool {
+	entries, err := os.ReadDir(p.frameDir)
+	if err != nil {
+		return false
+	}
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			ext := strings.ToLower(filepath.Ext(e.Name()))
+			if ext == ".txt" || ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".svg" {
+				files = append(files, filepath.Join(p.frameDir, e.Name()))
+			}
+		}
+	}
+
+	// 排序规则保持和 loadFrames 一致
+	sortFrames(files)
+
+	// 文件数量或名字不同
+	if len(files) != len(p.frameFiles) {
+		return true
+	}
+	for i := range files {
+		if files[i] != p.frameFiles[i] {
+			return true
+		}
+		st, err := os.Stat(files[i])
+		if err != nil {
+			return true
+		}
+		old := p.lastModTimes[files[i]]
+		if !st.ModTime().Equal(old) {
+			return true
+		}
+	}
+	return false
+}
+
+// sortFrames 对帧文件列表进行统一排序：
+// 1. 优先按文件名末尾的数字升序；
+// 2. 如果数字相同，再按原始名字的字母序升序。
+func sortFrames(files []string) {
+	sort.Slice(files, func(i, j int) bool {
+		fi := extractFrameInfo(files[i])
+		fj := extractFrameInfo(files[j])
+		if fi.Number != fj.Number {
+			return fi.Number < fj.Number
+		}
+		return strings.ToLower(fi.RawName) < strings.ToLower(fj.RawName)
+	})
 }
 
 // 中心点触发式缓存刷新 + 显示帧
@@ -468,10 +686,9 @@ func (p *FramePlayer) showFrame(index int) {
 	}
 	p.lastShownFrame = index
 
+	half := p.cacheWindowSize / 2
 	// 如果当前帧不在缓存，则以当前帧为中心点，缓存前后 N/2 帧（已在缓存的跳过）
 	if _, ok := p.frameCache[index]; !ok {
-		// log.Printf("[Cache] Triggered by index: %d", index)
-		half := p.cacheWindowSize / 2
 		for delta := -half; delta <= half; delta++ {
 			j := (index + delta) % p.frameCount
 			if j < 0 {
@@ -491,10 +708,16 @@ func (p *FramePlayer) showFrame(index int) {
 				if err != nil {
 					obj = widget.NewLabel("读取失败：" + err.Error())
 				} else {
-					obj = p.makeTextView(string(content))
+					// 保存原始文本到一个 map，方便残影模式调用
+					p.frameTexts[j] = string(content)
+					obj = p.makeTextViewWithStyle(string(content), theme.Color(theme.ColorNameForeground), uint8(255))
 				}
 			case ".svg":
-				obj = renderSVGToObject(path, fyne.NewSize(0, 0))
+				var img image.Image
+				obj, img = renderSVGToObject(path, fyne.NewSize(0, 0))
+				if img != nil {
+					p.frameImages[j] = img
+				}
 			case ".png", ".jpg", ".jpeg":
 				f, err := os.Open(path)
 				if err != nil {
@@ -510,9 +733,8 @@ func (p *FramePlayer) showFrame(index int) {
 					if err != nil {
 						obj = widget.NewLabel("图像解码失败：" + err.Error())
 					} else {
-						pic := canvas.NewImageFromImage(img)
-						pic.FillMode = canvas.ImageFillOriginal
-						obj = container.NewCenter(pic)
+						p.frameImages[j] = img
+						obj = p.makeImageView(img, 0.0)
 					}
 				}
 			default:
@@ -524,28 +746,49 @@ func (p *FramePlayer) showFrame(index int) {
 
 	// 显示当前帧（无论是否刚刚加载）
 	fyne.Do(func() {
-		p.displayArea.RemoveAll()
 		co := p.frameCache[index]
-		// 极端情况下（IO/解码失败）保护
 		if co == nil {
 			co = widget.NewLabel("加载失败")
 		}
-		p.displayArea.Add(co)
+
+		// === 残影模式 ===
+		if p.ghostMode && index > 0 {
+			if prevObj, okPrev := p.frameCache[index-1]; okPrev && prevObj != nil {
+				var ghost fyne.CanvasObject
+				if prevText, okText := p.frameTexts[index-1]; okText {
+					ghost = p.makeTextViewWithStyle(prevText, color.NRGBA{R: 210, G: 180, B: 140, A: 255}, 150)
+				} else if prevImg, okImg := p.frameImages[index-1]; okImg {
+					ghost = p.makeImageView(prevImg, 0.5)
+				}
+
+				if ghost != nil {
+					ghostLayer := container.NewStack(ghost, co)
+					p.ShowContent(ghostLayer)
+				} else {
+					p.ShowContent(co)
+				}
+			} else {
+				p.ShowContent(co)
+			}
+		} else {
+			p.ShowContent(co)
+		}
+
 		p.updateFrameInfoLabel(index)
-		p.displayArea.Refresh()
 	})
 
 	// 清理远离当前帧的缓存帧
 	for k := range p.frameCache {
-		if circularDistance(k, index, p.frameCount) > p.cacheWindowSize {
+		if circularDistance(k, index, p.frameCount) > half {
 			delete(p.frameCache, k)
+			delete(p.frameTexts, k)
+			delete(p.frameImages, k)
 		}
 	}
 
 	// 显示新帧的时候滚动条放最顶上。
-	p.scrollableContent.ScrollToTop()
-
-	// log.Printf("[Cache] Total cached frames: %d", len(p.frameCache))
+	// p.scrollableContent.ScrollToTop()
+	p.updateFrameMapButtons(index)
 }
 
 func circularDistance(a, b, total int) int {
@@ -560,31 +803,9 @@ func abs(x int) int {
 }
 
 func (p *FramePlayer) ShowContent(obj fyne.CanvasObject) {
-	p.displayArea.RemoveAll()
-	p.displayArea.Add(obj)
-	p.displayArea.Refresh()
-}
-
-func (p *FramePlayer) playFrames() {
-	p.playing = true
-	p.updatePlayPauseIcon()
-
-	go func() {
-		for p.playing {
-			if p.frameCount == 0 {
-				time.Sleep(100 * time.Millisecond)
-				continue
-			}
-			index := (p.lastShownFrame + 1) % p.frameCount
-			p.showFrame(index)
-			p.currentFrame = index
-
-			// Ticker 会自动补偿时间差值，帧率更加稳定。
-			// Ticker 适合高帧率的场景，当前情况下我们用Sleep足够
-			// 每次都读取最新的播放速率
-			time.Sleep(p.frameRate)
-		}
-	}()
+	if disp, ok := p.displayArea.(*FrameDisplay); ok {
+		disp.SetContent(obj)
+	}
 }
 
 func (p *FramePlayer) togglePlayPause() {
@@ -595,6 +816,7 @@ func (p *FramePlayer) togglePlayPause() {
 	if p.playing {
 		p.playing = false
 		p.updatePlayPauseIcon()
+		p.waitForPlaybackExit()
 		return
 	}
 
@@ -602,9 +824,11 @@ func (p *FramePlayer) togglePlayPause() {
 	if p.reversePlaying {
 		p.reversePlaying = false
 		p.updateReversePlayIcon()
+
+		p.waitForPlaybackExit()
 	}
 
-	go p.playFrames()
+	go p.playFrames(1)
 }
 
 func (p *FramePlayer) updatePlayPauseIcon() {
@@ -752,28 +976,34 @@ func (p *FramePlayer) showSettingsDialog() {
 func makeShortcutInfo() fyne.CanvasObject {
 	lines := []string{
 		"Keyboard Shortcuts:",
-		"  Space — Play / Pause (forward)",
-		"  r     — Play / Pause (reverse)",
-		"  → / l — Next frame",
-		"  ← / h — Previous frame",
-		"  s     — Stop playback",
-		"  o     — Open directory",
-		"  e     — Open Recent Directory",
-		"  g     — Export GIF",
-		"  F12   — Full Screen Switch",
-		"  F4    — Toggle button display",
+		"                Space - Play / Pause (forward)       s     - Stop playback",
+		"                r     - Play / Pause (reverse)       o     - Open directory",
+		"                → / l - Next frame                   e     - Open Recent Directory",  
+		"                .     - Next Key frame               g     - ExportGIF",
+		"                ← / h - Previous frame               F12   - Full Screen Switch",  
+		"                ,     - Previous Key frame           F4    - Toggle button display",
+		"    Mouse Wheel ↑ / ↓ - Previous / Next frame        F6    - Toggle Frame map only mode display", 
+		"",
+		"                    v - Toggle ghost mode(The afterimage of the previous frame is",
+		"                                          superimposed on the current frame)",
+		"                   F5 - Toggle refresh mode(Automatically update file changes",
+		"                                            Can only be used to manually play frames)",
+		"Frame file format:",
+		"    Ordinary frame file: my_frame_1.txt (Just end with a number)",
+		"    keyframe file: my_frame_K18.txt (The number at the end is preceded by the letter K)",
+		"    Keyframe prompt file: my_frame__tips_messages__K19.txt (Keyframe prompt word wrapped in double underline)",
 	}
 	vbox := container.NewVBox()
 	for _, line := range lines {
 		t := canvas.NewText(line, theme.Color(theme.ColorNameForeground))
 		t.TextStyle = fyne.TextStyle{Monospace: true}
-		t.TextSize = 14
+		t.TextSize = 12
 		vbox.Add(t)
 	}
 	return vbox
 }
 func (p *FramePlayer) SetupUI() fyne.CanvasObject {
-	p.displayArea = container.NewVBox()
+	p.displayArea = NewFrameDisplay(p)
 
 	// TimeLine
 	timelineSlider := widget.NewSlider(0, 1)
@@ -793,7 +1023,7 @@ func (p *FramePlayer) SetupUI() fyne.CanvasObject {
 	}
 
 	go func() {
-		tk := time.NewTicker(150 * time.Millisecond)
+		tk := time.NewTicker(50 * time.Millisecond)
 		defer tk.Stop()
 		for range tk.C {
 			fyne.Do(func() {
@@ -865,7 +1095,7 @@ func (p *FramePlayer) SetupUI() fyne.CanvasObject {
 				if err := p.loadFrames(d); err != nil {
 					return
 				}
-				p.window.SetTitle(appTitle + " - " + filepath.Base(d))
+				p.setWindowTitleWithDir(d)
 				p.addRecentDir(d)
 				p.currentFrame = 0
 				if p.frameCount > 0 {
@@ -893,37 +1123,31 @@ func (p *FramePlayer) SetupUI() fyne.CanvasObject {
 		p.toggleReversePlayPause()
 	})
 	stopBtn := widget.NewButtonWithIcon("", theme.MediaStopIcon(), func() {
-		p.playing = false
-		p.reversePlaying = false
-		p.updatePlayPauseIcon()
-		p.updateReversePlayIcon()
-
-		if p.frameCount == 0 {
-			return
-		}
-		p.currentFrame = 0
-		p.showFrame(p.currentFrame)
-		p.currentFrame = p.lastShownFrame
+		p.stop()
 	})
 
 	prevBtn := widget.NewButtonWithIcon("", theme.MediaSkipPreviousIcon(), func() {
-		if p.frameCount == 0 {
-			return
-		}
-		index := (p.lastShownFrame - 1 + p.frameCount) % p.frameCount
-		p.showFrame(index)
-		p.currentFrame = p.lastShownFrame
+		p.prevFrame()
 	})
 	nextBtn := widget.NewButtonWithIcon("", theme.MediaSkipNextIcon(), func() {
-		if p.frameCount == 0 {
-			return
-		}
-		index := (p.lastShownFrame + 1) % p.frameCount
-		p.showFrame(index)
-		p.currentFrame = p.lastShownFrame
+		p.nextFrame()
 	})
 	settingsBtn := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() {
 		p.showSettingsDialog()
+	})
+
+	// 新增 About 按钮
+	aboutBtn := widget.NewButtonWithIcon("", theme.InfoIcon(), func() {
+		// 构建超链接
+		repoURL, _ := url.Parse("https://github.com/qindapao/common_tool")
+
+		content := container.NewVBox(
+			widget.NewLabel(appTitle+" "+appVersion),
+			widget.NewLabel("Author: Qin Qing"),
+			widget.NewHyperlink("GitHub Repository", repoURL),
+		)
+
+		dialog.ShowCustom("About", "Close", content, p.window)
 	})
 
 	// 导出 GIF 按钮
@@ -935,13 +1159,25 @@ func (p *FramePlayer) SetupUI() fyne.CanvasObject {
 	topRow := container.NewHBox(
 		frameInfo,
 		p.playPauseBtn, p.reversePlayBtn, stopBtn, prevBtn, nextBtn,
-		unifiedDirBtn, p.recentMenuBtn, settingsBtn, exportBtn,
+		unifiedDirBtn, p.recentMenuBtn, settingsBtn, exportBtn, aboutBtn,
 		p.layoutSpacer(),
 		speedControl,
 	)
 	p.controlBar = topRow
 
-	timelineBar := container.NewVBox(timelineSlider)
+	p.frameMapBox = container.NewHBox()
+	p.frameMapScroll = container.NewHScroll(p.frameMapBox)
+	frameMap := container.NewBorder(nil, nil,
+		widget.NewButtonWithIcon("", theme.NavigateBackIcon(), func() {
+			p.frameMapScroll.ScrollToOffset(fyne.NewPos(p.frameMapScroll.Offset.X-100, 0))
+		}),
+		widget.NewButtonWithIcon("", theme.NavigateNextIcon(), func() {
+			p.frameMapScroll.ScrollToOffset(fyne.NewPos(p.frameMapScroll.Offset.X+100, 0))
+		}),
+		p.frameMapScroll,
+	)
+	timelineBar := container.NewVBox(timelineSlider, frameMap)
+
 	p.timelineBar = timelineBar
 
 	// 初始可见性：根据配置决定是否隐藏
@@ -952,6 +1188,216 @@ func (p *FramePlayer) SetupUI() fyne.CanvasObject {
 	// 布局：上控制条 + 下内容区 + 进度条
 	p.scrollableContent = container.NewScroll(p.displayArea)
 	return container.NewBorder(p.controlBar, timelineBar, nil, nil, p.scrollableContent)
+}
+
+// stop 播放并回到第一帧
+func (p *FramePlayer) stop() {
+	// 停止播放协程
+	p.playing = false
+	p.reversePlaying = false
+	// 等待播放循环退出
+	p.waitForPlaybackExit()
+	// 更新按钮图标
+	p.updatePlayPauseIcon()
+	p.updateReversePlayIcon()
+
+	if p.frameCount == 0 {
+		return
+	}
+
+	// 回到第一帧
+	p.showFrame(0)
+	p.currentFrame = 0
+}
+
+// 跳到下一帧
+func (p *FramePlayer) nextFrame() {
+	if p.frameCount == 0 {
+		return
+	}
+	index := (p.lastShownFrame + 1) % p.frameCount
+	p.showFrame(index)
+	p.currentFrame = p.lastShownFrame
+}
+
+// 跳到上一帧
+func (p *FramePlayer) prevFrame() {
+	if p.frameCount == 0 {
+		return
+	}
+	index := (p.lastShownFrame - 1 + p.frameCount) % p.frameCount
+	p.showFrame(index)
+	p.currentFrame = p.lastShownFrame
+}
+
+// 通用：从 start 开始按 step（+1 或 -1）搜索下一个关键帧。
+// 参数 start 表示从哪个索引开始搜索（传 lastShownFrame）。
+func (p *FramePlayer) gotoKeyframeByStep(start, step int) {
+	if p.frameCount == 0 {
+		return
+	}
+	if step != 1 && step != -1 {
+		return
+	}
+
+	n := p.frameCount
+	first := (start + step + n) % n
+
+	for offset := range p.frameFiles {
+		// idx = (first + offset*step) 环形取模并保证非负
+		idx := ((first+offset*step)%n + n) % n
+		if extractFrameInfo(p.frameFiles[idx]).IsKey {
+			p.showFrame(idx)
+			p.lastShownFrame = idx
+			p.currentFrame = idx
+			return
+		}
+	}
+}
+
+// 向后（下一个）关键帧
+func (p *FramePlayer) gotoNextKeyframe() {
+	p.gotoKeyframeByStep(p.lastShownFrame, 1)
+}
+
+// 向前（上一个）关键帧
+func (p *FramePlayer) gotoPrevKeyframe() {
+	p.gotoKeyframeByStep(p.lastShownFrame, -1)
+}
+
+// 判断指定按钮是否在 HScroll 可见范围内（带边距）
+func (p *FramePlayer) isButtonVisible(i int, margin float32) bool {
+	if p.frameMapScroll == nil || i < 0 || i >= len(p.frameMapButtons) {
+		return true // 视为可见，避免误滚动
+	}
+	btn := p.frameMapButtons[i]
+
+	// 通过绝对坐标转换为内容坐标，更稳定
+	btnAbs := fyne.CurrentApp().Driver().AbsolutePositionForObject(btn)
+	contentAbs := fyne.CurrentApp().Driver().AbsolutePositionForObject(p.frameMapBox)
+	btnX := btnAbs.X - contentAbs.X
+	btnW := btn.Size().Width
+
+	scrollX := p.frameMapScroll.Offset.X
+	scrollW := p.frameMapScroll.Size().Width
+
+	leftOk := btnX >= scrollX+margin
+	rightOk := (btnX + btnW) <= (scrollX + scrollW - margin)
+	return leftOk && rightOk
+}
+
+// 将滚动条滚到目标按钮附近（左侧预留 margin 像素）
+func (p *FramePlayer) scrollToButton(i int, margin float32) {
+	if p.frameMapScroll == nil || i < 0 || i >= len(p.frameMapButtons) {
+		return
+	}
+	btn := p.frameMapButtons[i]
+
+	btnAbs := fyne.CurrentApp().Driver().AbsolutePositionForObject(btn)
+	contentAbs := fyne.CurrentApp().Driver().AbsolutePositionForObject(p.frameMapBox)
+	btnX := btnAbs.X - contentAbs.X
+
+	targetX := btnX - margin
+	targetX = max(targetX, 0)
+	fyne.Do(func() {
+		p.frameMapScroll.ScrollToOffset(fyne.NewPos(targetX, 0))
+	})
+}
+
+func (p *FramePlayer) updateFrameMapButtons(index int) {
+	if p.frameMapDirty || len(p.frameMapButtons) != p.frameCount {
+		fmt.Println("* 初始化 frameMapButtons: 构建帧按钮列表")
+		p.frameMapBox.Objects = nil
+		p.frameMapButtons = nil
+		p.frameMapDirty = false
+
+		for i, file := range p.frameFiles {
+			// 这里必须要定义一个新变量，不然闭包捕获的是同一个i值
+			// 通常是索引的最后一个
+			frameIndex := i
+			info := extractFrameInfo(file)
+			label := strconv.Itoa(info.Number)
+
+			btn := widget.NewButton(label, func() {
+				p.showFrame(frameIndex)
+				p.currentFrame = frameIndex
+			})
+
+			btn.Importance = widget.LowImportance
+			btn.Refresh()
+
+			// 保存按钮本体用于高亮控制
+			p.frameMapButtons = append(p.frameMapButtons, btn)
+
+			// 使用封装的样式函数
+			styled := p.styledFrameButton(frameIndex, btn)
+			p.frameMapBox.Add(styled)
+		}
+
+		p.frameMapBox.Refresh()
+	}
+
+	p.updateFrameHighlight(index)
+	// 然后判断是否需要滚动到当前帧按钮
+	const margin float32 = 20
+	if !p.isButtonVisible(index, margin) {
+		p.scrollToButton(index, margin)
+	}
+}
+
+func (p *FramePlayer) updateFrameHighlight(index int) {
+	// 清除上一帧高亮
+	if p.currentFrame >= 0 && p.currentFrame < len(p.frameMapButtons) {
+		btn := p.frameMapButtons[p.currentFrame]
+		if btn.Importance != widget.LowImportance {
+			btn.Importance = widget.LowImportance
+			fyne.Do(func() {
+				btn.Refresh()
+			})
+		}
+	}
+
+	// 设置当前帧高亮
+	if index >= 0 && index < len(p.frameMapButtons) {
+		btn := p.frameMapButtons[index]
+		if btn.Importance != widget.HighImportance {
+			btn.Importance = widget.HighImportance
+			fyne.Do(func() {
+				btn.Refresh()
+			})
+		}
+	}
+}
+
+func (p *FramePlayer) styledFrameButton(i int, btn *widget.Button) fyne.CanvasObject {
+	info := extractFrameInfo(p.frameFiles[i])
+
+	// 把“数字 + 注释”合并为按钮文本
+	label := strconv.Itoa(info.Number)
+	ann := strings.TrimSpace(info.Annotation)
+	if ann != "" {
+		// 截断注释，避免按钮被撑太宽
+		annShort := truncateRunes(ann, 14) // 长度可调 10~16
+		label = label + " · " + annShort
+	}
+
+	btn.SetText(label)
+	btn.Importance = widget.LowImportance
+	btn.Refresh()
+
+	// 关键帧：边框包住按钮（你的原逻辑）
+	if info.IsKey {
+		size := btn.MinSize()
+		border := canvas.NewRectangle(color.Transparent)
+		border.StrokeColor = soilGray
+		border.StrokeWidth = 1.5
+		border.FillColor = color.Transparent
+		border.CornerRadius = 12
+		border.Resize(fyne.NewSize(size.Width+6, size.Height+6))
+		return container.NewStack(border, btn)
+	}
+
+	return btn
 }
 
 // 获取系统字体目录（首选常见路径，若存在则使用）
@@ -1117,7 +1563,9 @@ func (p *FramePlayer) showDirSelector(start string) {
 			// bar.Add(widget.NewLabel("/"))
 			bar.Add(widget.NewLabel(""))
 			accum = filepath.Join(accum, seg)
+			// 这里必须要使用一个新的变量不能直接使用accum
 			segPath := accum
+			// 因为这里有闭包,所以必须用一个新的变量
 			btn := widget.NewButton(seg, func() {
 				cur = segPath
 				refreshForDir()
@@ -1147,7 +1595,7 @@ func (p *FramePlayer) showDirSelector(start string) {
 			dialog.ShowError(err, win)
 			return
 		}
-		p.window.SetTitle(appTitle + " - " + filepath.Base(cur))
+		p.setWindowTitleWithDir(cur)
 		p.addRecentDir(cur)
 		p.saveConfig()
 		p.currentFrame = 0
@@ -1246,58 +1694,134 @@ func (p *FramePlayer) BindKeyEvents(canvas fyne.Canvas) {
 		case fyne.KeyR:
 			p.toggleReversePlayPause()
 		case fyne.KeyRight, fyne.KeyL:
-			if p.frameCount > 0 {
-				index := (p.lastShownFrame + 1) % p.frameCount
-				p.showFrame(index)
-				p.currentFrame = p.lastShownFrame
-			}
+			p.nextFrame()
 		case fyne.KeyLeft, fyne.KeyH:
-			if p.frameCount > 0 {
-				index := (p.lastShownFrame - 1 + p.frameCount) % p.frameCount
-				p.showFrame(index)
-				p.currentFrame = p.lastShownFrame
-			}
+			p.prevFrame()
 		case fyne.KeyS:
-			p.playing = false
-			p.reversePlaying = false
-			p.updatePlayPauseIcon()
-			p.updateReversePlayIcon()
-			if p.frameCount > 0 {
-				p.currentFrame = 0
-				p.showFrame(p.currentFrame)
-				p.currentFrame = p.lastShownFrame
-			}
+			p.stop()
 		case fyne.KeyF12:
 			p.window.SetFullScreen(!p.window.FullScreen())
 		case fyne.KeyF4:
-			p.toggleControlsVisible()
+			p.toggleHideAllControls()
+		case fyne.KeyF6:
+			p.toggleFrameMapOnlyMode()
+		case fyne.KeyComma: // ','
+			p.gotoPrevKeyframe()
+		case fyne.KeyPeriod: // '.'
+			p.gotoNextKeyframe()
+		case fyne.KeyV:
+			p.toggleGhostMode()
+		case fyne.KeyF5:
+			p.toggleRefreshMode()
 		}
 	})
 }
 
-func (p *FramePlayer) toggleControlsVisible() {
-	p.controlsVisible = !p.controlsVisible
+func (p *FramePlayer) toggleGhostMode() {
+	p.ghostMode = !p.ghostMode
+	p.setWindowTitleWithDir(p.frameDir)
+	p.showFrame(p.currentFrame)
+}
+
+func (p *FramePlayer) toggleRefreshMode() {
+	p.refreshMode = !p.refreshMode
+	p.setWindowTitleWithDir(p.frameDir)
+
+	if p.refreshMode {
+		if p.refreshTicker == nil {
+			p.refreshTicker = time.NewTicker(100 * time.Millisecond)
+			p.refreshQuit = make(chan struct{})
+			go func() {
+				for {
+					select {
+					case <-p.refreshTicker.C:
+						if !p.playing && !p.reversePlaying {
+							if p.checkDirChanged() {
+								fyne.Do(func() {
+									log.Printf("dir changed!")
+									if err := p.loadFrames(p.frameDir); err == nil {
+										if p.currentFrame >= p.frameCount {
+											p.currentFrame = 0
+										}
+										p.showFrame(p.currentFrame)
+									}
+								})
+							}
+						}
+					case <-p.refreshQuit:
+						return
+					}
+				}
+			}()
+		}
+	} else {
+		if p.refreshTicker != nil {
+			p.refreshTicker.Stop()
+			close(p.refreshQuit)
+			p.refreshTicker = nil
+			p.refreshQuit = nil
+		}
+	}
+}
+
+func (p *FramePlayer) toggleFrameMapOnlyMode() {
+	p.frameMapOnlyMode = !p.frameMapOnlyMode
+	p.hideAllControls = false // F6 模式不属于“完全隐藏”
 
 	if p.controlBar != nil {
-		if p.controlsVisible {
-			p.controlBar.Show()
-		} else {
-			p.controlBar.Hide()
-		}
-		p.controlBar.Refresh()
+		p.controlBar.Hide()
 	}
+
 	if p.timelineBar != nil {
-		if p.controlsVisible {
+		for i, obj := range p.timelineBar.Objects {
+			if i == 1 && p.frameMapOnlyMode {
+				obj.Show() // 显示帧地图
+			} else {
+				obj.Hide()
+			}
+		}
+		p.timelineBar.Show()
+		p.timelineBar.Refresh()
+	}
+
+	if !p.frameMapOnlyMode {
+		// 恢复默认模式（显示所有控件）
+		if p.controlBar != nil {
+			p.controlBar.Show()
+		}
+		if p.timelineBar != nil {
+			for _, obj := range p.timelineBar.Objects {
+				obj.Show()
+			}
 			p.timelineBar.Show()
+			p.timelineBar.Refresh()
+		}
+	}
+}
+
+func (p *FramePlayer) toggleHideAllControls() {
+	p.hideAllControls = !p.hideAllControls
+	p.frameMapOnlyMode = false // F4 模式不显示帧地图
+
+	if p.controlBar != nil {
+		if p.hideAllControls {
+			p.controlBar.Hide()
 		} else {
+			p.controlBar.Show()
+		}
+	}
+
+	if p.timelineBar != nil {
+		if p.hideAllControls {
 			p.timelineBar.Hide()
+		} else {
+			for _, obj := range p.timelineBar.Objects {
+				obj.Show()
+			}
+			p.timelineBar.Show()
 		}
 		p.timelineBar.Refresh()
 	}
-	if p.displayArea != nil {
-		p.displayArea.Refresh()
-	}
-	p.saveConfig()
 }
 
 func (p *FramePlayer) BindRuneEvents(canvas fyne.Canvas) {
@@ -1597,7 +2121,7 @@ func (p *FramePlayer) drawTextIntoRGBA(path string, face font.Face, lineH int, d
 		return err
 	}
 
-	// \U0001f527 文本预处理：去 BOM、统一换行、展开 Tab
+	// 文本预处理：去 BOM、统一换行、展开 Tab
 	if len(b) >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF {
 		b = b[3:]
 	}
@@ -1607,7 +2131,7 @@ func (p *FramePlayer) drawTextIntoRGBA(path string, face font.Face, lineH int, d
 	s = strings.ReplaceAll(s, "\t", "    ")
 	lines := strings.Split(s, "\n")
 
-	// \U0001f527 计算最大行宽（逐字符测量）
+	// 计算最大行宽（逐字符测量）
 	maxWidth := 0
 	for _, ln := range lines {
 		width := 0
@@ -1622,15 +2146,11 @@ func (p *FramePlayer) drawTextIntoRGBA(path string, face font.Face, lineH int, d
 			maxWidth = width
 		}
 	}
-	textW := maxWidth
-	textH := len(lines) * lineH
 
-	// \U0001f527 居中起点
-	dstW, dstH := dst.Bounds().Dx(), dst.Bounds().Dy()
-	startX := (dstW - textW) / 2
-	startY := (dstH - textH) / 2
+	startX := 0
+	startY := 0
 
-	// \U0001f527 绘制每行逐字符
+	// 绘制每行逐字符
 	d := &font.Drawer{
 		Dst:  dst,
 		Src:  image.NewUniform(fg),
@@ -1669,11 +2189,11 @@ func (p *FramePlayer) drawImageIntoRGBA(path string, dst *image.RGBA) error {
 	if err != nil {
 		return err
 	}
-	b := imgSrc.Bounds()
-	dw, dh := dst.Bounds().Dx(), dst.Bounds().Dy()
-	off := image.Pt((dw-b.Dx())/2, (dh-b.Dy())/2)
-	r := image.Rectangle{Min: off, Max: off.Add(b.Size())}
-	draw.Draw(dst, r, imgSrc, b.Min, draw.Over)
+
+	// 左上角对齐绘制
+	srcBounds := imgSrc.Bounds()
+	targetRect := image.Rect(0, 0, srcBounds.Dx(), srcBounds.Dy())
+	draw.Draw(dst, targetRect, imgSrc, srcBounds.Min, draw.Over)
 	return nil
 }
 
@@ -1691,7 +2211,8 @@ func (p *FramePlayer) drawSVGIntoRGBA(path string, dst *image.RGBA) error {
 	if w <= 0 || h <= 0 {
 		w, h = 200, 200
 	}
-	// 在单独 RGBA 渲染，再居中绘制到 dst
+
+	// 在单独 RGBA 渲染，再左上角绘制到 dst
 	tmp := image.NewRGBA(image.Rect(0, 0, w, h))
 	draw.Draw(tmp, tmp.Bounds(), &image.Uniform{color.Transparent}, image.Point{}, draw.Src)
 	icon.SetTarget(0, 0, float64(w), float64(h))
@@ -1699,9 +2220,8 @@ func (p *FramePlayer) drawSVGIntoRGBA(path string, dst *image.RGBA) error {
 	r := rasterx.NewDasher(w, h, scanner)
 	icon.Draw(r, 1.0)
 
-	dw, dh := dst.Bounds().Dx(), dst.Bounds().Dy()
-	off := image.Pt((dw-w)/2, (dh-h)/2)
-	rect := image.Rectangle{Min: off, Max: off.Add(tmp.Bounds().Size())}
+	// 左上角绘制
+	rect := image.Rectangle{Min: image.Pt(0, 0), Max: image.Pt(w, h)}
 	draw.Draw(dst, rect, tmp, image.Point{}, draw.Over)
 	return nil
 }
@@ -1812,7 +2332,7 @@ func main() {
 	configPath := filepath.Join(home, configFileName)
 
 	a := app.NewWithID("com.example.asciiplay")
-	w := a.NewWindow(appTitle)
+	w := a.NewWindow(appTitle + " " + appVersion)
 
 	res := fyne.NewStaticResource("icon.png", iconPNG)
 	w.SetIcon(res)
@@ -1827,7 +2347,7 @@ func main() {
 	if len(player.recentDirs) > 0 {
 		dir := player.recentDirs[0]
 		if err := player.loadFrames(dir); err == nil && player.frameCount > 0 {
-			player.window.SetTitle(appTitle + " - " + filepath.Base(dir))
+			player.setWindowTitleWithDir(dir)
 			player.currentFrame = 0
 			player.showFrame(player.currentFrame)
 			player.currentFrame = player.lastShownFrame
@@ -1839,3 +2359,6 @@ func main() {
 
 	w.ShowAndRun()
 }
+
+
+

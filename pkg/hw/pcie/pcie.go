@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -397,7 +398,7 @@ func PCIEErrorRead() *cobra.Command {
 				defer f.Close()
 
 				// 构造输出结构：包含 all_summary 和每个设备的 summary/parent/child/errors
-				out := make(map[string]interface{}, len(flat)+1)
+				out := make(map[string]any, len(flat)+1)
 				out["all_summary"] = allSummary
 
 				for addr, dev := range flat {
@@ -416,7 +417,7 @@ func PCIEErrorRead() *cobra.Command {
 					}
 
 					// :TODO: 这里可以打印设备支持的所有 Feature
-					out[addr] = map[string]interface{}{
+					out[addr] = map[string]any{
 						"summary":  sum,
 						"parent":   parent,
 						"children": children,
@@ -651,7 +652,7 @@ func printTree(roots map[uint16][]*Node) {
 	for d := range roots {
 		domains = append(domains, d)
 	}
-	sort.Slice(domains, func(i, j int) bool { return domains[i] < domains[j] })
+	slices.Sort(domains)
 
 	// 遍历每个域，打印域标识及其子树
 	for di, dom := range domains {

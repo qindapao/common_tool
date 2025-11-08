@@ -461,7 +461,7 @@ func TestLazyBuilder_Regex_Each_Report(t *testing.T) {
 		Each(func(code string) {
 			reported = append(reported, code)
 			// 假设上报错误码：ReportError(code)
-			fmt.Printf("\U0001f4e1 Reporting: %s\n", code)
+			fmt.Printf("Reporting: %s\n", code)
 		})
 
 	want := []string{"ERR1001", "ERR3021", "ERR5000"}

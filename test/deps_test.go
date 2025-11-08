@@ -55,7 +55,7 @@ func TestNoImportCycles(t *testing.T) {
 
 	if len(uniqueCycles) > 0 {
 		for _, c := range uniqueCycles {
-			t.Logf("\U0001f300 循环依赖路径: %s", graph.FormatCycle(c))
+			t.Logf("O 循环依赖路径: %s", graph.FormatCycle(c))
 		}
 		t.Fatalf("共检测到 %d 个循环依赖", len(uniqueCycles))
 	}

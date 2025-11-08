@@ -64,7 +64,7 @@ func ShBackslashQuote(inStr string, table *[256]byte, flags int) string {
 }
 
 // 下面用来测试
-// $'\a\b\t\n\v\f\r\E\\\'\000\001ABC中文\U0001f642'
+// $'\a\b\t\n\v\f\r\E\\\'\000\001ABC中文'
 // BashANSIQuote 将任意字符串转为 $'...' 形式的 ANSI-C 样式安全字符串
 func BashANSIQuote(s string) string {
 	var b strings.Builder
