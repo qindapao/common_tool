@@ -4,8 +4,11 @@ go 1.24
 
 require (
 	fyne.io/fyne/v2 v2.6.3
+	github.com/armon/go-radix v1.0.0
 	github.com/awalterschulze/gographviz v2.0.3+incompatible
 	github.com/dustin/go-humanize v1.0.1
+	github.com/emirpasic/gods v1.18.1
+	github.com/google/btree v1.1.3
 	github.com/mattn/go-runewidth v0.0.19
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826
 	github.com/pkg/sftp v1.13.9

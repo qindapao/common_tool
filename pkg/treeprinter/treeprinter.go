@@ -145,3 +145,66 @@ func PrintTreeGeneric[T TreeNode](printer TreePrinter[T]) string {
 	return b.String()
 }
 
+type MultiNode struct {
+	Data     any // 节点数据，可以是任意类型
+	Children []*MultiNode
+}
+
+type MultiTreePrinter struct {
+	Root     *MultiNode
+	Style    int                     // 0 = ascii, 1 = unicode
+	FormatFn func(*MultiNode) string // 可选的自定义格式化函数
+}
+
+func PrintMultiTree(printer MultiTreePrinter) string {
+	if printer.Root == nil {
+		return "tree is empty\n"
+	}
+
+	var b strings.Builder
+
+	var dfs func(node *MultiNode, prefix string, isLast bool)
+	dfs = func(node *MultiNode, prefix string, isLast bool) {
+		if node == nil {
+			return
+		}
+
+		connector := ""
+		branch := ""
+		space := ""
+		if printer.Style == 1 {
+			connector = "└── "
+			branch = "├── "
+			space = "│   "
+		} else {
+			connector = "'-- "
+			branch = ".-- "
+			space = "|   "
+		}
+
+		// 使用 FormatFn，如果没有就用默认 Data 的字符串
+		label := fmt.Sprintf("%v", node.Data)
+		if printer.FormatFn != nil {
+			label = printer.FormatFn(node)
+		}
+
+		if isLast {
+			b.WriteString(fmt.Sprintf("%s%s%s\n", prefix, connector, label))
+		} else {
+			b.WriteString(fmt.Sprintf("%s%s%s\n", prefix, branch, label))
+		}
+
+		for i, child := range node.Children {
+			newPrefix := prefix
+			if isLast {
+				newPrefix += "    "
+			} else {
+				newPrefix += space
+			}
+			dfs(child, newPrefix, i == len(node.Children)-1)
+		}
+	}
+
+	dfs(printer.Root, "", true)
+	return b.String()
+}

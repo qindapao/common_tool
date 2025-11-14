@@ -8,7 +8,6 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 
 	"common_tool/pkg/toolutil"
 )
@@ -60,7 +59,7 @@ func (l *LogLevel) Type() string {
 var (
 	logger       *log.Logger
 	logFile      *os.File
-	once         sync.Once
+	logFileName  string
 	currentLevel = INFO // 默认日志级别
 )
 
@@ -73,29 +72,36 @@ func ParseLogLevel(s string) (LogLevel, error) {
 }
 
 // InitLogger 初始化日志，允许指定输出目标（stdout 或 文件）
+// 修改为只保存配置，不立即创建文件（避免启动时生成空文件）
 func InitLogger(output string, level LogLevel) {
-	once.Do(func() {
+	logFileName = output
+	currentLevel = level
+	logger = nil
+	logFile = nil
+}
+
+// logMessage 记录日志，**仅输出符合当前级别的日志**
+// 修改为第一次真正写日志时才创建文件
+func logMessage(level LogLevel, msg string, args ...any) {
+	if level < currentLevel {
+		return
+	}
+	if logger == nil {
 		var err error
-		if output == "stdout" {
+		if logFileName == "stdout" || logFileName == "" {
 			logFile = os.Stdout
 		} else {
 			logFile, err = os.OpenFile(
 				// 以追加模式打开日志文件，不会覆盖已有内容
-				output, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
+				logFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 			if err != nil {
-				log.Fatal("无法创建日志文件:", err)
+				logFile = os.Stdout
+				fmt.Fprintf(os.Stderr, "无法创建日志文件 %s: %v，改用 stdout\n", logFileName, err)
 			}
 		}
 		logger = log.New(logFile, "", log.LstdFlags)
-		currentLevel = level // 设置日志级别
-	})
-}
-
-// logMessage 记录日志，**仅输出符合当前级别的日志**
-func logMessage(level LogLevel, msg string, args ...any) {
-	if logger == nil {
-		InitLogger("stdout", INFO) // 默认输出到控制台
 	}
+
 	if level >= currentLevel { // 值越小打印得越多
 		_, file, line, _ := runtime.Caller(2) // 获取真正调用的文件+行号
 		// :TODO: 这里看下效果，但是不一定好
