@@ -660,12 +660,12 @@ func TestPeek(t *testing.T) {
 
 		stream := toolutil.StreamOf(data)
 		stream = toolutil.Peek(stream, func(u user) {
-			log = append(log, fmt.Sprintf("\U0001f440 %s", u.Name))
+			log = append(log, fmt.Sprintf("%s", u.Name))
 		})
 
 		result := stream.ToSlice()
 
-		wantLog := []string{"\U0001f440 Alice", "\U0001f440 Bob"}
+		wantLog := []string{"Alice", "Bob"}
 		if !reflect.DeepEqual(log, wantLog) {
 			t.Errorf("Peek logging incorrect: got %v, want %v", log, wantLog)
 		}
@@ -1649,4 +1649,3 @@ func TestFloatStreamBuilder_FilterSafe(t *testing.T) {
 
 	assert.Equal(t, []float64{2.2, 3.3}, out)
 }
-

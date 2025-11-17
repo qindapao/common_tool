@@ -95,4 +95,3 @@ func (h *GenericHeap[T]) PrintTree(format func(T) string, style int, direction i
 
 	return b.String()
 }
-
