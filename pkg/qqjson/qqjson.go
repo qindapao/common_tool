@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -467,10 +466,14 @@ func (opts *CLIOptions) strToJsonStr() error {
 		return err
 	}
 
-	// 这里的末尾不用加X是因为，JSON字符串本身就不可能以回车结束
-	fmt.Printf("%s", strconv.Quote(string(raw)))
+	// 使用 encoding/json 来生成合法的 JSON 字符串
+	encoded, err := json.Marshal(string(raw))
+	if err != nil {
+		return err
+	}
 
-	return err
+	fmt.Printf("%s", encoded)
+	return nil
 }
 
 func (opts *CLIOptions) readInput() ([]byte, error) {
