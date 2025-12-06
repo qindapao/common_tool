@@ -3,7 +3,6 @@ package sh
 import (
 	"fmt"
 	"strings"
-	"unicode"
 )
 
 const (
@@ -93,7 +92,7 @@ func BashANSIQuote(s string) string {
 		case '\'':
 			b.WriteString(`\'`)
 		default:
-			if !unicode.IsPrint(r) || r < 32 || r == 127 {
+			if r < 32 || r == 127 {
 				// 对不可打印字符使用 \ooo 八进制转义
 				b.WriteString(fmt.Sprintf(`\%03o`, r))
 			} else {
