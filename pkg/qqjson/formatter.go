@@ -19,24 +19,24 @@ import (
 const maxCharsPerLine = 80
 
 type OutputFormatter interface {
-	Format(res gjson.Result, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode
+	Format(res gjson.Result, jsonFormat JSONFormat, trieSep string) *errorutil.ExitErrorWithCode
 }
 
 type BashFormatter struct{}
 
-func (f BashFormatter) Format(res gjson.Result, _ JSONFormat) *errorutil.ExitErrorWithCode {
+func (f BashFormatter) Format(res gjson.Result, _ JSONFormat, _ string) *errorutil.ExitErrorWithCode {
 	return outputBash(res)
 }
 
 type TextFormatter struct{}
 
-func (f TextFormatter) Format(res gjson.Result, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode {
-	return outputText(res, jsonFormat)
+func (f TextFormatter) Format(res gjson.Result, jsonFormat JSONFormat, trieSep string) *errorutil.ExitErrorWithCode {
+	return outputText(res, jsonFormat, trieSep)
 }
 
 type TypeFormatter struct{}
 
-func (f TypeFormatter) Format(res gjson.Result, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode {
+func (f TypeFormatter) Format(res gjson.Result, jsonFormat JSONFormat, _ string) *errorutil.ExitErrorWithCode {
 	return outputType(res)
 }
 
@@ -88,6 +88,31 @@ func writeCustomJSON(buf *bytes.Buffer, v any, indent int) {
 	}
 }
 
+func writeTrieJSON(buf *bytes.Buffer, v any, path string, trieSep string) {
+	switch val := v.(type) {
+
+	case map[string]any:
+		if len(val) == 0 {
+			writeTrieLeaf(buf, val, path, trieSep)
+			return
+		}
+		for k, v2 := range val {
+			writeTrieJSON(buf, v2, path+"{"+k+"}"+trieSep, trieSep)
+		}
+	case []any:
+		if len(val) == 0 {
+			writeTrieLeaf(buf, val, path, trieSep)
+			return
+		}
+
+		for i, item := range val {
+			writeTrieJSON(buf, item, fmt.Sprintf("%s[%v]%s", path, i, trieSep), trieSep)
+		}
+	default:
+		writeTrieLeaf(buf, val, path, trieSep)
+	}
+}
+
 func isLeaf(v any) bool {
 	switch val := v.(type) {
 	case map[string]any:
@@ -128,6 +153,30 @@ func writeLeaf(buf *bytes.Buffer, v any, indent int) {
 		fmt.Fprintf(buf, "o:{}\n")
 	default:
 		fmt.Fprintf(buf, "unknown type\n")
+	}
+}
+
+func writeTrieLeaf(buf *bytes.Buffer, v any, path string, trieSep string) {
+	switch val := v.(type) {
+	case string:
+		fmt.Fprintf(buf, " [%s]=%s", sh.BashANSIQuote(path), sh.BashANSIQuote(val))
+	case float64:
+		fmt.Fprintf(buf, " [%s]=%s",
+			sh.BashANSIQuote(path),
+			sh.BashANSIQuote(fmt.Sprintf("%v", val)+trieSep),
+		)
+	case bool:
+		if val {
+			fmt.Fprintf(buf, " [%s]=%s", sh.BashANSIQuote(path), sh.BashANSIQuote("true"+trieSep))
+		} else {
+			fmt.Fprintf(buf, " [%s]=%s", sh.BashANSIQuote(path), sh.BashANSIQuote("false"+trieSep))
+		}
+	case nil:
+		fmt.Fprintf(buf, " [%s]=%s", sh.BashANSIQuote(path), sh.BashANSIQuote("null"+trieSep))
+	case []any:
+		fmt.Fprintf(buf, " [%s]=%s", sh.BashANSIQuote(path), sh.BashANSIQuote("[]"+trieSep))
+	case map[string]any:
+		fmt.Fprintf(buf, " [%s]=%s", sh.BashANSIQuote(path), sh.BashANSIQuote("{}"+trieSep))
 	}
 }
 
@@ -239,7 +288,7 @@ func outputBash(res gjson.Result) *errorutil.ExitErrorWithCode {
 	return outputType(res)
 }
 
-func formatJSON(data []byte, format JSONFormat) []byte {
+func formatJSON(data []byte, format JSONFormat, trieSep string) []byte {
 	switch format {
 	case JSONFormatMul:
 		return pretty.PrettyOptions(data, &pretty.Options{
@@ -263,6 +312,15 @@ func formatJSON(data []byte, format JSONFormat) []byte {
 
 		rawJSON := pretty.Ugly(data)
 		writeWrappedRawJSON(&buf, rawJSON)
+
+		return buf.Bytes()
+	case JSONFormatTrie:
+		var raw any
+		if err := json.Unmarshal(data, &raw); err != nil {
+			return fmt.Appendf(nil, "error: %v", err)
+		}
+		var buf bytes.Buffer
+		writeTrieJSON(&buf, raw, "", trieSep)
 
 		return buf.Bytes()
 	default:
@@ -300,7 +358,7 @@ func writeWrappedRawJSON(buf *bytes.Buffer, raw []byte) {
 	}
 }
 
-func outputText(res gjson.Result, jsonFormat JSONFormat) *errorutil.ExitErrorWithCode {
+func outputText(res gjson.Result, jsonFormat JSONFormat, trieSep string) *errorutil.ExitErrorWithCode {
 	raw := []byte(res.Raw)
 	errInit := &errorutil.ExitErrorWithCode{
 		Code:        errorutil.CodeSuccess,
@@ -308,7 +366,7 @@ func outputText(res gjson.Result, jsonFormat JSONFormat) *errorutil.ExitErrorWit
 		Err:         nil,
 		CmdExitCode: errorutil.CodeSuccess}
 
-	_, err := os.Stdout.Write(formatJSON(raw, jsonFormat))
+	_, err := os.Stdout.Write(formatJSON(raw, jsonFormat, trieSep))
 	errInit.Err = err
 
 	if err != nil {

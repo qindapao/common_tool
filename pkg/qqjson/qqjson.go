@@ -28,17 +28,18 @@ type CLIOptions struct {
 	// 从文件或者标准输入中来
 	Kind string
 	// 直接从参数中获取数据
-	InArg      string
-	Format     string
-	Path       string
-	UseArgPath bool
-	ArgPath    []string
-	StrInput   string
-	JSONInput  string
-	FileInput  string
-	Input      any
-	Mode       string
-	JSONFormat JSONFormat
+	InArg         string
+	Format        string
+	Path          string
+	UseArgPath    bool
+	ArgPath       []string
+	StrInput      string
+	JSONInput     string
+	FileInput     string
+	Input         any
+	Mode          string
+	JSONFormat    JSONFormat
+	TrieSeparator string
 }
 
 type JSONFormat string
@@ -48,6 +49,7 @@ const (
 	JSONFormatMul   JSONFormat = "mul"
 	JSONFormatRaw   JSONFormat = "raw"
 	JSONFormatHuman JSONFormat = "human"
+	JSONFormatTrie  JSONFormat = "trie"
 
 	JSONTypeNull    = 1
 	JSONTypeTrue    = 2
@@ -57,6 +59,8 @@ const (
 	JSONTypeArray   = 6
 	JSONTypeObject  = 7
 	JSONTypeUnknown = 8
+
+	DefaultSep = "\034"
 )
 
 // 为了让 VarP 接收自定义类型，实现 flag.Value 接口(String Set Type)即可：
@@ -67,6 +71,7 @@ func (f *JSONFormat) Set(val string) error {
 	case string(JSONFormatMul),
 		string(JSONFormatOne),
 		string(JSONFormatRaw),
+		string(JSONFormatTrie),
 		string(JSONFormatHuman):
 		*f = JSONFormat(val)
 		return nil
@@ -85,6 +90,7 @@ func (JSONFormat) Values() []string {
 		string(JSONFormatMul),
 		string(JSONFormatOne),
 		string(JSONFormatRaw),
+		string(JSONFormatTrie),
 		string(JSONFormatHuman),
 	}
 }
@@ -415,12 +421,13 @@ printf "%s" "$str" | ./gobolt json -m e -k stdin
 	cmd.Flags().StringVarP(&opts.Format, "format", "t", "txt", "输出格式：txt/sh/type")
 	cmd.Flags().StringVarP(&opts.StrInput, "strinput", "s", "", "写入的字符串值")
 	cmd.Flags().StringVarP(&opts.JSONInput, "jsoninput", "j", "", "写入的 JSON 字符串")
+	cmd.Flags().StringVarP(&opts.TrieSeparator, "trieseparator", "x", DefaultSep, "trie转换使用的分隔符")
 	// 如果要写入的内容特别大只能通过文件传递进来
 	// 并且文件中只能放JSON格式数据
 	cmd.Flags().StringVarP(&opts.FileInput, "fileinput", "f", "", "写入的 JSON 文件")
 	// 输出的JSON文件的格式 (一行/多行美化打印)
 	opts.JSONFormat = JSONFormatMul
-	cmd.Flags().VarP(&opts.JSONFormat, "jsonformat", "F", "输出的 JSON 的格式(mul|one|raw|human)，代表多行/一行/原始格式/人类可读输出")
+	cmd.Flags().VarP(&opts.JSONFormat, "jsonformat", "F", "输出的 JSON 的格式(mul|one|raw|human|trie)，代表多行/一行/原始格式/人类可读/bash字典树输出")
 
 	cmd.MarkFlagRequired("mode")
 
@@ -531,7 +538,7 @@ func (opts *CLIOptions) readValueFromJSON() error {
 		}
 	}
 
-	errFormat := formatter.Format(result, opts.JSONFormat)
+	errFormat := formatter.Format(result, opts.JSONFormat, opts.TrieSeparator)
 	if errFormat.Code == errorutil.CodeSuccess &&
 		errFormat.CmdExitCode == errorutil.CodeSuccess {
 		return nil
@@ -578,7 +585,7 @@ func (opts *CLIOptions) modifyJSON(
 		return err
 	}
 
-	formatted := formatJSON(updatedJSON, opts.JSONFormat)
+	formatted := formatJSON(updatedJSON, opts.JSONFormat, opts.TrieSeparator)
 
 	if opts.Kind == "file" {
 		return os.WriteFile(opts.InArg, formatted, 0644)
