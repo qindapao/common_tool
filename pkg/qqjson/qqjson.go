@@ -19,7 +19,7 @@ var (
 	GjsonVersion  string
 	SjsonVersion  string
 	PrettyVersion string
-	QqjsonVersion string = "v1.0.0"
+	QqjsonVersion string = "v1.0.1"
 )
 
 // 数组和字典指定写入可以不在这个工具中做
@@ -30,9 +30,11 @@ type CLIOptions struct {
 	// 直接从参数中获取数据
 	InArg         string
 	Format        string
-	Path          string
 	UseArgPath    bool
 	ArgPath       []string
+	Path          string
+	UseMultiPath  bool
+	MultiPaths    []string
 	StrInput      string
 	JSONInput     string
 	FileInput     string
@@ -320,6 +322,10 @@ gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].4 -j '{
 
 上面的含义是把 deme.json 中的内容追加到 demo.json 中的 key1.key3 键里面。
 
+(6). 多路径字符串写入
+
+gobolt json -m w -k file -i demo.json -s "" -M -- ":ke.:y1" "s:value1" ":key2.:key3" 'j:null'
+
 
 4. 删除
 
@@ -366,6 +372,8 @@ printf "%s" "$str" | ./gobolt json -m e -k stdin
 			if opts.UseArgPath {
 				opts.ArgPath = args
 				opts.Path = qJsonEscapeAndJoin(opts.ArgPath)
+			} else if opts.UseMultiPath {
+				opts.MultiPaths = args
 			}
 
 			if opts.FileInput != "" {
@@ -416,6 +424,7 @@ printf "%s" "$str" | ./gobolt json -m e -k stdin
 	cmd.Flags().StringVarP(&opts.Mode, "mode", "m", "", "r / w / d / s / e / v / t 操作模式")
 	cmd.Flags().StringVarP(&opts.Path, "path", "p", "", "gjson / sjson 原始路径，保留原始格式，但是并不建议使用，原因见范例")
 	cmd.Flags().BoolVarP(&opts.UseArgPath, "argpath", "P", false, "从命令行中读取路径（需置于最后，空格分隔，强烈建议都用这种格式）")
+	cmd.Flags().BoolVarP(&opts.UseMultiPath, "multipath", "M", false, "从命令行中读取多个合法的sjson路径（需置于最后，空格分隔）")
 	cmd.Flags().StringVarP(&opts.Kind, "kind", "k", "", "json来源类别（默认 stdin / file / str）")
 	cmd.Flags().StringVarP(&opts.InArg, "inarg", "i", "", "json来源的值")
 	cmd.Flags().StringVarP(&opts.Format, "format", "t", "txt", "输出格式：txt/sh/type")
@@ -547,6 +556,30 @@ func (opts *CLIOptions) readValueFromJSON() error {
 	}
 }
 
+func parseTypedValue(raw string) (any, error) {
+	if len(raw) < 2 || raw[1] != ':' {
+		return nil, fmt.Errorf("值格式无效，必须以 s: 或 j: 开头: %s", raw)
+	}
+
+	prefix := raw[:2]
+	content := raw[2:]
+
+	switch prefix {
+	case "s:":
+		// 纯字符串
+		return content, nil
+	case "j:":
+		// JSON 字符串，需要 Unmarshal
+		var v any
+		if err := json.Unmarshal([]byte(content), &v); err != nil {
+			return nil, fmt.Errorf("无效的 JSON 值: %v", err)
+		}
+		return v, nil
+	default:
+		return nil, fmt.Errorf("未知的值前缀: %s", prefix)
+	}
+}
+
 // ./gobolt -w a1.Data9.xx\\.yy -d xx -f result2.jso
 // 本身带点号的键需要这样传入
 func (opts *CLIOptions) modifyJSON(
@@ -580,12 +613,38 @@ func (opts *CLIOptions) modifyJSON(
 	}
 
 	// 应用传入的操作函数（设置或删除）
-	updatedJSON, err := operation(jsonData, opts.Path, value)
-	if err != nil {
-		return err
+	if opts.UseMultiPath && len(opts.MultiPaths) > 0 {
+		if len(opts.MultiPaths)%2 != 0 {
+			return fmt.Errorf("多路径模式下参数必须成对出现: 路径 + 值")
+		}
+
+		updated := jsonData
+
+		for i := 0; i < len(opts.MultiPaths); i += 2 {
+			path := opts.MultiPaths[i]
+			rawValue := opts.MultiPaths[i+1]
+
+			value, err := parseTypedValue(rawValue)
+			if err != nil {
+				return fmt.Errorf("解析值 %q 时出错: %w", rawValue, err)
+			}
+
+			updated, err = operation(updated, path, value)
+			if err != nil {
+				return fmt.Errorf("处理路径 %q 时出错: %w", path, err)
+			}
+		}
+
+		jsonData = updated
+	} else {
+		updatedJSON, err := operation(jsonData, opts.Path, value)
+		if err != nil {
+			return err
+		}
+		jsonData = updatedJSON
 	}
 
-	formatted := formatJSON(updatedJSON, opts.JSONFormat, opts.TrieSeparator)
+	formatted := formatJSON(jsonData, opts.JSONFormat, opts.TrieSeparator)
 
 	if opts.Kind == "file" {
 		return os.WriteFile(opts.InArg, formatted, 0644)
