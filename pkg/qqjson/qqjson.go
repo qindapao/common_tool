@@ -19,7 +19,7 @@ var (
 	GjsonVersion  string
 	SjsonVersion  string
 	PrettyVersion string
-	QqjsonVersion string = "v1.0.1"
+	QqjsonVersion string = "v1.0.2"
 )
 
 // 数组和字典指定写入可以不在这个工具中做
@@ -38,6 +38,7 @@ type CLIOptions struct {
 	StrInput      string
 	JSONInput     string
 	FileInput     string
+	RawFileInput  string
 	Input         any
 	Mode          string
 	JSONFormat    JSONFormat
@@ -307,6 +308,10 @@ gobolt json -m w -k file -i demo.json -p key1.key2.:3.key4 -s "value1"
     }
 }
 
+(6). 可以使用 -o/--rawfileinput 从文件中写入原始字符串
+
+./gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].2 -o "input_str_file.txt"
+
 2). 写入数组
 gobolt json -m w -k file -i demo.json -p key1.key2.3.specialkey\\.\\[\\].3 -j '["xx1", "yy2"]'
 
@@ -384,6 +389,12 @@ printf "%s" "$str" | ./gobolt json -m e -k stdin
 				if err := json.Unmarshal(jsonData, &opts.Input); err != nil {
 					return fmt.Errorf("无效的 JSON 文件内容: %v", err)
 				}
+			} else if opts.RawFileInput != "" {
+				data, err := os.ReadFile(opts.RawFileInput)
+				if err != nil {
+					return fmt.Errorf("无法读取文件 %s: %w", opts.RawFileInput, err)
+				}
+				opts.Input = data
 			} else if opts.JSONInput != "" {
 				if err := json.Unmarshal([]byte(opts.JSONInput), &opts.Input); err != nil {
 					return fmt.Errorf("无效的 JSON 字符串: %v", err)
@@ -434,6 +445,7 @@ printf "%s" "$str" | ./gobolt json -m e -k stdin
 	// 如果要写入的内容特别大只能通过文件传递进来
 	// 并且文件中只能放JSON格式数据
 	cmd.Flags().StringVarP(&opts.FileInput, "fileinput", "f", "", "写入的 JSON 文件")
+	cmd.Flags().StringVarP(&opts.RawFileInput, "rawfileinput", "o", "", "写入的 原始字符串 文件")
 	// 输出的JSON文件的格式 (一行/多行美化打印)
 	opts.JSONFormat = JSONFormatMul
 	cmd.Flags().VarP(&opts.JSONFormat, "jsonformat", "F", "输出的 JSON 的格式(mul|one|raw|human|trie)，代表多行/一行/原始格式/人类可读/bash字典树输出")
