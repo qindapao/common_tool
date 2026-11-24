@@ -13,7 +13,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const TOOL_VERSION = "1.0.2+20260112"
+const TOOL_VERSION = "1.0.3+20261124"
 
 func main() {
 	var rootCmd = &cobra.Command{

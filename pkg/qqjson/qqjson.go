@@ -19,7 +19,7 @@ var (
 	GjsonVersion  string
 	SjsonVersion  string
 	PrettyVersion string
-	QqjsonVersion string = "v1.0.2"
+	QqjsonVersion string = "v1.0.3"
 )
 
 // 数组和字典指定写入可以不在这个工具中做

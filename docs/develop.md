@@ -134,3 +134,22 @@ go build -o myapp-linux-arm ./cmd/yourapp
 需要 cgo 时，多装个交叉 gcc，并把 CC_for_target（或 CC) 指向它。
 
 照着上面配，就能在 Windows 一键生成 Linux ARM 的 Go 可执行。
+
+## 库更新
+
+不用手动修改 `go.mod` 文件，直接：
+
+```bash
+cd /d/code/common_tool
+
+go get github.com/tidwall/gjson@v1.20.6
+go get github.com/tidwall/sjson@v1.2.11
+go mod tidy
+
+# 如果有用例可以先执行用例，如果没有可以省略这一步，直接编译
+go test ./pkg/qqjson ./cmd/gobolt
+
+make gobolt
+```
+
+
